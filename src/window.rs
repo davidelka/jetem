@@ -15,6 +15,7 @@ use winit::window::{Window, WindowId};
 
 use crate::font::Font;
 use crate::grid::Grid;
+use crate::pty::Pty;
 use crate::render;
 
 /// Wakes the event loop from the reader thread: "the grid changed, repaint."
@@ -26,6 +27,8 @@ pub enum UserEvent {
 pub struct App {
     grid: Arc<Mutex<Grid>>,
     font: Font,
+    /// Owns the PTY master so we can resize it (SIGWINCH) when the window changes.
+    pty: Pty,
     /// Our keystrokes go here -> PTY -> shell.
     writer: Box<dyn Write + Send>,
     /// Latest modifier state (Ctrl/Shift/…), updated on `ModifiersChanged`.
@@ -40,7 +43,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(grid: Arc<Mutex<Grid>>, font: Font, writer: Box<dyn Write + Send>) -> Self {
+    pub fn new(grid: Arc<Mutex<Grid>>, font: Font, pty: Pty, writer: Box<dyn Write + Send>) -> Self {
         let (rows, cols) = {
             let g = grid.lock().unwrap();
             (g.rows, g.cols)
@@ -50,6 +53,7 @@ impl App {
         Self {
             grid,
             font,
+            pty,
             writer,
             mods: ModifiersState::empty(),
             win_w,
@@ -77,6 +81,29 @@ impl App {
         }
         buffer.present().unwrap();
     }
+
+    /// Window changed pixel size: recompute the grid dimensions, resize our grid
+    /// model, and tell the shell (SIGWINCH) so full-screen apps re-lay-out.
+    fn on_resize(&mut self, px_w: u32, px_h: u32) {
+        if px_w == 0 || px_h == 0 {
+            return; // ignore minimize / degenerate sizes
+        }
+        let cols = (px_w as usize / self.font.cell_w).max(1);
+        let rows = (px_h as usize / self.font.cell_h).max(1);
+
+        {
+            let mut grid = self.grid.lock().unwrap();
+            if grid.rows == rows && grid.cols == cols {
+                return; // sub-cell pixel change; nothing to do
+            }
+            grid.resize(rows, cols);
+        }
+        let _ = self.pty.resize(rows as u16, cols as u16);
+
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -87,8 +114,7 @@ impl ApplicationHandler<UserEvent> for App {
         }
         let attrs = Window::default_attributes()
             .with_title("terminal")
-            .with_inner_size(PhysicalSize::new(self.win_w, self.win_h))
-            .with_resizable(false); // fixed size until M6 handles reflow
+            .with_inner_size(PhysicalSize::new(self.win_w, self.win_h));
 
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
         let context = softbuffer::Context::new(window.clone()).unwrap();
@@ -111,6 +137,7 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => self.redraw(),
+            WindowEvent::Resized(size) => self.on_resize(size.width, size.height),
             WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
             WindowEvent::MouseWheel { delta, .. } => {
                 let lines = match delta {

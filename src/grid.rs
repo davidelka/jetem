@@ -213,15 +213,45 @@ impl Grid {
     }
 
     /// The cell shown at screen position (row, col), accounting for how far the
-    /// viewport is scrolled into scrollback.
-    pub fn visible_cell(&self, row: usize, col: usize) -> &Cell {
+    /// viewport is scrolled into scrollback. Returned by value (Cell is Copy) so
+    /// out-of-range columns in mixed-width scrollback yield a blank safely.
+    pub fn visible_cell(&self, row: usize, col: usize) -> Cell {
         if row < self.view_offset {
             let sb = self.scrollback.len() - self.view_offset + row;
-            &self.scrollback[sb][col]
+            self.scrollback[sb].get(col).copied().unwrap_or_default()
         } else {
             let live = row - self.view_offset;
-            &self.cells[live * self.cols + col]
+            self.cells[live * self.cols + col]
         }
+    }
+
+    /// Resize the grid to `new_rows` × `new_cols`, preserving existing content
+    /// anchored top-left and clamping the cursor. No reflow (re-wrapping) yet —
+    /// the shell redraws its prompt on SIGWINCH, which refreshes the live line.
+    pub fn resize(&mut self, new_rows: usize, new_cols: usize) {
+        let new_rows = new_rows.max(1);
+        let new_cols = new_cols.max(1);
+        if new_rows == self.rows && new_cols == self.cols {
+            return;
+        }
+
+        let blank = self.blank();
+        let mut next = vec![blank; new_rows * new_cols];
+        let copy_rows = self.rows.min(new_rows);
+        let copy_cols = self.cols.min(new_cols);
+        for r in 0..copy_rows {
+            for c in 0..copy_cols {
+                next[r * new_cols + c] = self.cells[r * self.cols + c];
+            }
+        }
+
+        self.cells = next;
+        self.rows = new_rows;
+        self.cols = new_cols;
+        self.cursor_row = self.cursor_row.min(new_rows - 1);
+        self.cursor_col = self.cursor_col.min(new_cols - 1);
+        self.wrap_pending = false;
+        self.view_offset = 0;
     }
 
     // --- debugging / headless rendering ----------------------------------
@@ -346,5 +376,47 @@ mod tests {
         assert!(g.cursor_visible());
         g.set_cursor_visible(false);
         assert!(!g.cursor_visible());
+    }
+
+    #[test]
+    fn resize_grow_preserves_content() {
+        let mut g = Grid::new(2, 3);
+        for ch in "abc".chars() {
+            g.print(ch);
+        }
+        g.resize(4, 5); // grow both dimensions
+        assert_eq!(g.rows, 4);
+        assert_eq!(g.cols, 5);
+        let row0: String = (0..3).map(|c| g.cell(0, c).ch).collect();
+        assert_eq!(row0, "abc"); // top-left content kept
+    }
+
+    #[test]
+    fn resize_shrink_clamps_cursor() {
+        let mut g = Grid::new(5, 5);
+        g.move_to(4, 4);
+        g.resize(2, 2);
+        assert_eq!((g.cursor_row, g.cursor_col), (1, 1)); // clamped into bounds
+    }
+
+    #[test]
+    fn visible_cell_safe_after_width_change() {
+        // Archive a wide line, then shrink width; reading the old line must not panic.
+        let mut g = Grid::new(2, 6);
+        for ch in "wwwwww".chars() {
+            g.print(ch);
+        }
+        g.carriage_return();
+        g.line_feed();
+        for ch in "xxxxxx".chars() {
+            g.print(ch);
+        }
+        g.carriage_return();
+        g.line_feed(); // "wwwwww" -> scrollback (width 6)
+        g.resize(2, 3); // now narrower than the archived line
+        g.scroll_view(1);
+        // Reading columns 0..3 of the archived wide line is safe and correct.
+        let row0: String = (0..3).map(|c| g.visible_cell(0, c).ch).collect();
+        assert_eq!(row0, "www");
     }
 }

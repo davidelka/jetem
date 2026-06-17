@@ -67,7 +67,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let writer = pty.writer()?;
-    let mut app = App::new(grid, font, writer);
+    let mut app = App::new(grid, font, pty, writer);
     event_loop.run_app(&mut app)?;
     Ok(())
 }
