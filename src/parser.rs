@@ -6,26 +6,29 @@
 use vte::{Params, Perform};
 
 use crate::cell::{attr, Color};
-use crate::grid::Grid;
+use crate::screen::Screen;
 
-/// Holds a mutable borrow of the grid for the duration of one `advance()` call.
+/// Holds a mutable borrow of the screen for the duration of one `advance()`
+/// call. All output is routed to the screen's currently-active buffer, so an
+/// app can flip to the alternate screen mid-chunk and keep drawing.
 pub struct Performer<'a> {
-    pub grid: &'a mut Grid,
+    pub screen: &'a mut Screen,
 }
 
 impl Perform for Performer<'_> {
     /// A printable character arrived.
     fn print(&mut self, c: char) {
-        self.grid.print(c);
+        self.screen.active_mut().print(c);
     }
 
     /// A C0 control byte (newline, tab, …).
     fn execute(&mut self, byte: u8) {
+        let g = self.screen.active_mut();
         match byte {
-            b'\n' | 0x0b | 0x0c => self.grid.line_feed(), // LF, vertical tab, form feed
-            b'\r' => self.grid.carriage_return(),
-            b'\t' => self.grid.tab(),
-            0x08 => self.grid.backspace(),
+            b'\n' | 0x0b | 0x0c => g.line_feed(), // LF, vertical tab, form feed
+            b'\r' => g.carriage_return(),
+            b'\t' => g.tab(),
+            0x08 => g.backspace(),
             _ => {}
         }
     }
@@ -33,15 +36,22 @@ impl Perform for Performer<'_> {
     /// A complete CSI sequence: `ESC [ params... action`.
     fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], _ignore: bool, action: char) {
         // Private sequences (DEC modes) are marked with a leading `?`, e.g.
-        // `\x1b[?25h`. We handle cursor show/hide; other modes are ignored.
+        // `\x1b[?25h`. We handle cursor show/hide and the alternate screen;
+        // other modes are ignored.
         if intermediates.first() == Some(&b'?') {
             let mode = params.iter().next().map(|p| p[0]).unwrap_or(0);
-            if mode == 25 {
-                match action {
-                    'h' => self.grid.set_cursor_visible(true),
-                    'l' => self.grid.set_cursor_visible(false),
-                    _ => {}
+            let set = action == 'h';
+            match mode {
+                25 => self.screen.active_mut().set_cursor_visible(set),
+                // 47 / 1047 / 1049 all switch to/from the alternate screen.
+                47 | 1047 | 1049 => {
+                    if set {
+                        self.screen.enter_alt();
+                    } else {
+                        self.screen.leave_alt();
+                    }
                 }
+                _ => {}
             }
             return;
         }
@@ -54,17 +64,19 @@ impl Perform for Performer<'_> {
             }
         };
 
+        // Inline `active_mut()` per arm (rather than binding it once) so the
+        // `'m'` arm can take `&mut self` for `sgr` without a borrow conflict.
         match action {
-            'A' => self.grid.move_up(nth(0, 1)),
-            'B' => self.grid.move_down(nth(0, 1)),
-            'C' => self.grid.move_right(nth(0, 1)),
-            'D' => self.grid.move_left(nth(0, 1)),
+            'A' => self.screen.active_mut().move_up(nth(0, 1)),
+            'B' => self.screen.active_mut().move_down(nth(0, 1)),
+            'C' => self.screen.active_mut().move_right(nth(0, 1)),
+            'D' => self.screen.active_mut().move_left(nth(0, 1)),
             // CUP/HVP are 1-based on the wire; convert to our 0-based grid.
-            'H' | 'f' => self.grid.move_to(nth(0, 1) - 1, nth(1, 1) - 1),
-            'J' => self.grid.erase_in_display(nth(0, 0) as u16),
-            'K' => self.grid.erase_in_line(nth(0, 0) as u16),
+            'H' | 'f' => self.screen.active_mut().move_to(nth(0, 1) - 1, nth(1, 1) - 1),
+            'J' => self.screen.active_mut().erase_in_display(nth(0, 0) as u16),
+            'K' => self.screen.active_mut().erase_in_line(nth(0, 0) as u16),
             'm' => self.sgr(params),
-            _ => {} // unhandled CSI (modes, scroll regions, …) — added in later milestones
+            _ => {} // unhandled CSI (scroll regions, …) — added in later milestones
         }
     }
 }
@@ -81,7 +93,7 @@ impl Performer<'_> {
             return;
         }
 
-        let pen = &mut self.grid.pen;
+        let pen = &mut self.screen.active_mut().pen;
         let mut i = 0;
         while i < groups.len() {
             let g = &groups[i];
@@ -122,9 +134,10 @@ impl Performer<'_> {
     }
 
     fn reset_pen(&mut self) {
-        self.grid.pen.fg = Color::Default;
-        self.grid.pen.bg = Color::Default;
-        self.grid.pen.attrs = 0;
+        let pen = &mut self.screen.active_mut().pen;
+        pen.fg = Color::Default;
+        pen.bg = Color::Default;
+        pen.attrs = 0;
     }
 }
 
@@ -159,62 +172,72 @@ fn extended_color(group: &[u16], groups: &[Vec<u16>], i: &mut usize) -> Option<C
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::screen::Screen;
     use vte::Parser;
 
-    /// Feed raw bytes through a real `vte::Parser` into a fresh grid.
-    fn run(bytes: &[u8], rows: usize, cols: usize) -> Grid {
-        let mut grid = Grid::new(rows, cols);
+    /// Feed raw bytes through a real `vte::Parser` into a fresh screen.
+    fn run(bytes: &[u8], rows: usize, cols: usize) -> Screen {
+        let mut screen = Screen::new(rows, cols);
         let mut parser = Parser::new();
-        let mut perf = Performer { grid: &mut grid };
+        let mut perf = Performer { screen: &mut screen };
         parser.advance(&mut perf, bytes);
-        grid
+        screen
     }
 
     #[test]
     fn plain_text_lands_in_grid() {
-        let g = run(b"hi", 1, 8);
-        assert_eq!(g.cell(0, 0).ch, 'h');
-        assert_eq!(g.cell(0, 1).ch, 'i');
+        let s = run(b"hi", 1, 8);
+        assert_eq!(s.active().cell(0, 0).ch, 'h');
+        assert_eq!(s.active().cell(0, 1).ch, 'i');
     }
 
     #[test]
     fn cup_moves_cursor_absolute() {
         // ESC[2;3H -> row 2, col 3 (1-based) == (1,2) 0-based.
-        let g = run(b"\x1b[2;3H", 5, 5);
+        let s = run(b"\x1b[2;3H", 5, 5);
+        let g = s.active();
         assert_eq!((g.cursor_row, g.cursor_col), (1, 2));
     }
 
     #[test]
     fn sgr_sets_color_and_resets() {
         // red 'a', reset, plain 'b'
-        let g = run(b"\x1b[31ma\x1b[0mb", 1, 4);
-        assert_eq!(g.cell(0, 0).fg, Color::Indexed(1));
-        assert_eq!(g.cell(0, 1).fg, Color::Default);
+        let s = run(b"\x1b[31ma\x1b[0mb", 1, 4);
+        assert_eq!(s.active().cell(0, 0).fg, Color::Indexed(1));
+        assert_eq!(s.active().cell(0, 1).fg, Color::Default);
     }
 
     #[test]
     fn sgr_truecolor() {
-        let g = run(b"\x1b[38;2;10;20;30mx", 1, 4);
-        assert_eq!(g.cell(0, 0).fg, Color::Rgb(10, 20, 30));
+        let s = run(b"\x1b[38;2;10;20;30mx", 1, 4);
+        assert_eq!(s.active().cell(0, 0).fg, Color::Rgb(10, 20, 30));
     }
 
     #[test]
     fn erase_display_clears_screen() {
-        let g = run(b"abc\x1b[2J", 1, 3);
-        assert_eq!(g.to_text(), "   ");
+        let s = run(b"abc\x1b[2J", 1, 3);
+        assert_eq!(s.active().to_text(), "   ");
     }
 
     #[test]
     fn carriage_return_overwrites() {
-        let g = run(b"hello\rH", 1, 5);
-        assert_eq!(g.to_text(), "Hello");
+        let s = run(b"hello\rH", 1, 5);
+        assert_eq!(s.active().to_text(), "Hello");
     }
 
     #[test]
     fn private_mode_hides_and_shows_cursor() {
-        let g = run(b"\x1b[?25l", 1, 3);
-        assert!(!g.cursor_visible());
-        let g = run(b"\x1b[?25l\x1b[?25h", 1, 3);
-        assert!(g.cursor_visible());
+        let s = run(b"\x1b[?25l", 1, 3);
+        assert!(!s.active().cursor_visible());
+        let s = run(b"\x1b[?25l\x1b[?25h", 1, 3);
+        assert!(s.active().cursor_visible());
+    }
+
+    #[test]
+    fn alt_screen_switch_preserves_primary() {
+        // Write to primary, enter alt and draw, leave alt -> primary restored.
+        let s = run(b"AB\x1b[?1049hZZ\x1b[?1049l", 1, 4);
+        assert_eq!(s.active().cell(0, 0).ch, 'A');
+        assert_eq!(s.active().cell(0, 1).ch, 'B');
     }
 }

@@ -193,6 +193,25 @@ impl Grid {
     pub fn set_cursor_visible(&mut self, visible: bool) {
         self.cursor_visible = visible;
     }
+
+    /// Cap scrollback length; 0 disables it (used for the alternate screen).
+    pub fn set_max_scrollback(&mut self, max: usize) {
+        self.max_scrollback = max;
+        while self.scrollback.len() > self.max_scrollback {
+            self.scrollback.pop_front();
+        }
+    }
+
+    /// Blank every cell and reset the cursor/pen/view to a fresh state (used
+    /// when entering the alternate screen).
+    pub fn clear(&mut self) {
+        self.cells.iter_mut().for_each(|c| *c = Cell::default());
+        self.cursor_row = 0;
+        self.cursor_col = 0;
+        self.wrap_pending = false;
+        self.pen = Cell::default();
+        self.view_offset = 0;
+    }
     pub fn cursor_visible(&self) -> bool {
         self.cursor_visible
     }

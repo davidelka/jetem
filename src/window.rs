@@ -14,9 +14,9 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::font::Font;
-use crate::grid::Grid;
 use crate::pty::Pty;
 use crate::render;
+use crate::screen::Screen;
 
 /// Wakes the event loop from the reader thread: "the grid changed, repaint."
 #[derive(Debug)]
@@ -25,7 +25,7 @@ pub enum UserEvent {
 }
 
 pub struct App {
-    grid: Arc<Mutex<Grid>>,
+    screen: Arc<Mutex<Screen>>,
     font: Font,
     /// Owns the PTY master so we can resize it (SIGWINCH) when the window changes.
     pty: Pty,
@@ -43,15 +43,15 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(grid: Arc<Mutex<Grid>>, font: Font, pty: Pty, writer: Box<dyn Write + Send>) -> Self {
+    pub fn new(screen: Arc<Mutex<Screen>>, font: Font, pty: Pty, writer: Box<dyn Write + Send>) -> Self {
         let (rows, cols) = {
-            let g = grid.lock().unwrap();
-            (g.rows, g.cols)
+            let s = screen.lock().unwrap();
+            (s.rows(), s.cols())
         };
         let win_w = (cols * font.cell_w) as u32;
         let win_h = (rows * font.cell_h) as u32;
         Self {
-            grid,
+            screen,
             font,
             pty,
             writer,
@@ -76,8 +76,8 @@ impl App {
 
         let mut buffer = surface.buffer_mut().unwrap();
         {
-            let grid = self.grid.lock().unwrap();
-            render::paint(&mut buffer, w as usize, h as usize, &grid, &mut self.font);
+            let screen = self.screen.lock().unwrap();
+            render::paint(&mut buffer, w as usize, h as usize, screen.active(), &mut self.font);
         }
         buffer.present().unwrap();
     }
@@ -92,11 +92,11 @@ impl App {
         let rows = (px_h as usize / self.font.cell_h).max(1);
 
         {
-            let mut grid = self.grid.lock().unwrap();
-            if grid.rows == rows && grid.cols == cols {
+            let mut screen = self.screen.lock().unwrap();
+            if screen.rows() == rows && screen.cols() == cols {
                 return; // sub-cell pixel change; nothing to do
             }
-            grid.resize(rows, cols);
+            screen.resize(rows, cols);
         }
         let _ = self.pty.resize(rows as u16, cols as u16);
 
@@ -145,7 +145,7 @@ impl ApplicationHandler<UserEvent> for App {
                     MouseScrollDelta::PixelDelta(p) => (p.y / self.font.cell_h as f64) as isize,
                 };
                 if lines != 0 {
-                    self.grid.lock().unwrap().scroll_view(lines);
+                    self.screen.lock().unwrap().active_mut().scroll_view(lines);
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
@@ -162,9 +162,10 @@ impl ApplicationHandler<UserEvent> for App {
                         event.logical_key
                     {
                         {
-                            let mut g = self.grid.lock().unwrap();
-                            let page = g.rows as isize - 1;
-                            g.scroll_view(if key == NamedKey::PageUp { page } else { -page });
+                            let mut s = self.screen.lock().unwrap();
+                            let page = s.rows() as isize - 1;
+                            s.active_mut()
+                                .scroll_view(if key == NamedKey::PageUp { page } else { -page });
                         }
                         if let Some(w) = &self.window {
                             w.request_redraw();
@@ -174,7 +175,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 // Any other key snaps back to the live screen, then is sent on.
                 // The shell echoes printable chars back, so we never echo locally.
-                self.grid.lock().unwrap().reset_view();
+                self.screen.lock().unwrap().active_mut().reset_view();
                 if let Some(bytes) = encode_key(&event, self.mods) {
                     let _ = self.writer.write_all(&bytes);
                     let _ = self.writer.flush();

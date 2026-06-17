@@ -12,15 +12,16 @@ mod grid;
 mod parser;
 mod pty;
 mod render;
+mod screen;
 mod window;
 
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use grid::Grid;
 use parser::Performer;
 use pty::Pty;
+use screen::Screen;
 use vte::Parser;
 use winit::event_loop::EventLoop;
 use window::{App, UserEvent};
@@ -34,7 +35,7 @@ fn main() -> anyhow::Result<()> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let pty = Pty::spawn(&shell, ROWS, COLS)?;
 
-    let grid = Arc::new(Mutex::new(Grid::new(ROWS as usize, COLS as usize)));
+    let screen = Arc::new(Mutex::new(Screen::new(ROWS as usize, COLS as usize)));
     let font = font::Font::load(FONT_PATH, FONT_PX)?;
 
     // The event loop carries our custom `UserEvent` so the reader thread can
@@ -42,10 +43,10 @@ fn main() -> anyhow::Result<()> {
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
 
-    // Reader thread: shell output -> parse into the shared grid -> wake the UI.
+    // Reader thread: shell output -> parse into the shared screen -> wake the UI.
     let mut reader = pty.reader()?;
     {
-        let grid = grid.clone();
+        let screen = screen.clone();
         thread::spawn(move || {
             let mut vte = Parser::new();
             let mut buf = [0u8; 4096];
@@ -54,8 +55,8 @@ fn main() -> anyhow::Result<()> {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
                         {
-                            let mut g = grid.lock().unwrap();
-                            let mut perf = Performer { grid: &mut g };
+                            let mut s = screen.lock().unwrap();
+                            let mut perf = Performer { screen: &mut s };
                             vte.advance(&mut perf, &buf[..n]);
                         }
                         // Ignore the error if the window has already closed.
@@ -67,7 +68,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let writer = pty.writer()?;
-    let mut app = App::new(grid, font, pty, writer);
+    let mut app = App::new(screen, font, pty, writer);
     event_loop.run_app(&mut app)?;
     Ok(())
 }

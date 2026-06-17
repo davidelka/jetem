@@ -51,6 +51,32 @@ services — isolated, language-agnostic, fits David's MCP/Claude world). An **i
 Native dylib plugins are ruled out (unsafe, ABI-fragile). The real design work is the
 runtime-independent **event-bus + registries** layer.
 
+### Core vs plugin: the protocol-vs-policy rule
+
+Use this to decide what belongs in core vs. what plugins control:
+
+- **Protocol & correctness** → **CORE** (never a plugin). What the shell/programs emit and
+  expect: escape codes, colors, cursor, **alt-screen**, resize/SIGWINCH. Must behave identically
+  everywhere and be fast. Plugins may *observe* these via events, but never *reimplement* them
+  (a plugin "doing alt-screen its own way" would just break vim).
+- **Layout, content & interaction policy** → **PLUGIN-EXTENSIBLE**. Which regions exist, what
+  fills them, keybindings, themes, rich renderers.
+
+**Surface layering** (where each concern lives):
+
+```
+WINDOW
+ └─ Compositor / layout tree            ← plugins control UX HERE (M8 panes, M10 plugin panels)
+     ├─ Surface (a region + a content source)
+     │     • TerminalSurface = PTY + Screen{ primary ⇄ alt }   ← alt-screen is INSIDE here (core)
+     │     • PaneSurface running a program (e.g. htop)         ← M8
+     │     • PluginWidgetSurface (plugin draws cells)          ← later
+```
+
+Alt-screen is a detail *inside* one terminal surface; plugins operate at the surface/compositor
+level *above* it, so the two never conflict. The `Surface`/compositor abstraction is introduced
+at **M8** (first time there's >1 region) — not earlier, to avoid a one-implementation abstraction.
+
 ## Current code map (`src/`)
 
 | File | Role |
