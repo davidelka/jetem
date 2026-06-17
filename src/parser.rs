@@ -31,7 +31,21 @@ impl Perform for Performer<'_> {
     }
 
     /// A complete CSI sequence: `ESC [ params... action`.
-    fn csi_dispatch(&mut self, params: &Params, _intermediates: &[u8], _ignore: bool, action: char) {
+    fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], _ignore: bool, action: char) {
+        // Private sequences (DEC modes) are marked with a leading `?`, e.g.
+        // `\x1b[?25h`. We handle cursor show/hide; other modes are ignored.
+        if intermediates.first() == Some(&b'?') {
+            let mode = params.iter().next().map(|p| p[0]).unwrap_or(0);
+            if mode == 25 {
+                match action {
+                    'h' => self.grid.set_cursor_visible(true),
+                    'l' => self.grid.set_cursor_visible(false),
+                    _ => {}
+                }
+            }
+            return;
+        }
+
         // First sub-param of the nth group, treating 0/absent as `default`.
         let nth = |i: usize, default: usize| -> usize {
             match params.iter().nth(i) {
@@ -194,5 +208,13 @@ mod tests {
     fn carriage_return_overwrites() {
         let g = run(b"hello\rH", 1, 5);
         assert_eq!(g.to_text(), "Hello");
+    }
+
+    #[test]
+    fn private_mode_hides_and_shows_cursor() {
+        let g = run(b"\x1b[?25l", 1, 3);
+        assert!(!g.cursor_visible());
+        let g = run(b"\x1b[?25l\x1b[?25h", 1, 3);
+        assert!(g.cursor_visible());
     }
 }

@@ -78,14 +78,28 @@ pub fn paint(buf: &mut [u32], width: usize, height: usize, grid: &Grid, font: &m
     // Clear to the default background first.
     buf.fill(pack(DEFAULT_BG));
 
+    // The block cursor is only shown on the live screen (not while scrolled
+    // into history) and only when the program hasn't hidden it.
+    let show_cursor = grid.view_offset() == 0 && grid.cursor_visible();
+
     for row in 0..grid.rows {
         for col in 0..grid.cols {
-            let cell = grid.cell(row, col);
+            let cell = grid.visible_cell(row, col);
+            let bold = cell.attrs & attr::BOLD != 0;
             let mut fg = resolve(cell.fg, DEFAULT_FG);
             let mut bg = resolve(cell.bg, DEFAULT_BG);
 
+            // Bold + a base ANSI color (0–7) conventionally renders bright (8–15).
+            if bold {
+                if let Color::Indexed(i) = cell.fg {
+                    if i < 8 {
+                        fg = PALETTE[(i + 8) as usize];
+                    }
+                }
+            }
+
             // Reverse video and the block cursor both swap fg/bg.
-            let is_cursor = row == grid.cursor_row && col == grid.cursor_col;
+            let is_cursor = show_cursor && row == grid.cursor_row && col == grid.cursor_col;
             if (cell.attrs & attr::REVERSE != 0) ^ is_cursor {
                 std::mem::swap(&mut fg, &mut bg);
             }

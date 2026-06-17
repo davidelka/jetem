@@ -3,6 +3,8 @@
 //! in-memory model of what's on screen — the parser mutates it, the renderer
 //! reads it.
 
+use std::collections::VecDeque;
+
 use crate::cell::{Cell, Color};
 
 pub struct Grid {
@@ -18,6 +20,13 @@ pub struct Grid {
     wrap_pending: bool,
     /// Template cell carrying the active fg/bg/attrs (set by SGR sequences).
     pub pen: Cell,
+    /// Whether the cursor should be drawn (toggled by DECTCEM `?25 h/l`).
+    cursor_visible: bool,
+    /// Lines that have scrolled off the top, oldest at the front.
+    scrollback: VecDeque<Vec<Cell>>,
+    max_scrollback: usize,
+    /// How many lines we're scrolled up from the live screen (0 = at bottom).
+    view_offset: usize,
 }
 
 impl Grid {
@@ -30,6 +39,10 @@ impl Grid {
             cursor_col: 0,
             wrap_pending: false,
             pen: Cell::default(),
+            cursor_visible: true,
+            scrollback: VecDeque::new(),
+            max_scrollback: 1000,
+            view_offset: 0,
         }
     }
 
@@ -157,11 +170,58 @@ impl Grid {
         }
     }
 
-    /// Drop the top row, shift everything up, and blank the new bottom row.
+    /// Archive the top row into scrollback, shift everything up, and blank the
+    /// new bottom row.
     fn scroll_up(&mut self) {
         let blank = self.blank();
+        let top: Vec<Cell> = self.cells[0..self.cols].to_vec();
+        self.scrollback.push_back(top);
+        while self.scrollback.len() > self.max_scrollback {
+            self.scrollback.pop_front();
+        }
+        // If the user is scrolled up, follow the content so their viewport stays
+        // anchored on the same lines as new output pushes in.
+        if self.view_offset > 0 {
+            self.view_offset = (self.view_offset + 1).min(self.scrollback.len());
+        }
         self.cells.drain(0..self.cols);
         self.cells.resize(self.rows * self.cols, blank);
+    }
+
+    // --- scrollback & cursor visibility ----------------------------------
+
+    pub fn set_cursor_visible(&mut self, visible: bool) {
+        self.cursor_visible = visible;
+    }
+    pub fn cursor_visible(&self) -> bool {
+        self.cursor_visible
+    }
+    pub fn view_offset(&self) -> usize {
+        self.view_offset
+    }
+
+    /// Scroll the viewport: positive = up into history, negative = back down.
+    pub fn scroll_view(&mut self, delta: isize) {
+        let max = self.scrollback.len() as isize;
+        let next = (self.view_offset as isize + delta).clamp(0, max);
+        self.view_offset = next as usize;
+    }
+
+    /// Snap back to the live screen (called on keystrokes).
+    pub fn reset_view(&mut self) {
+        self.view_offset = 0;
+    }
+
+    /// The cell shown at screen position (row, col), accounting for how far the
+    /// viewport is scrolled into scrollback.
+    pub fn visible_cell(&self, row: usize, col: usize) -> &Cell {
+        if row < self.view_offset {
+            let sb = self.scrollback.len() - self.view_offset + row;
+            &self.scrollback[sb][col]
+        } else {
+            let live = row - self.view_offset;
+            &self.cells[live * self.cols + col]
+        }
     }
 
     // --- debugging / headless rendering ----------------------------------
@@ -237,5 +297,54 @@ mod tests {
         g.carriage_return();
         g.line_feed(); // at bottom -> scroll
         assert_eq!(g.cell(0, 0).ch, 'd'); // old row 1 became row 0
+    }
+
+    /// Push three rows through a 2-row grid; the first row lands in scrollback,
+    /// and scrolling the view up reveals it on screen row 0.
+    #[test]
+    fn scrollback_archives_and_views() {
+        let mut g = Grid::new(2, 3);
+        for line in ["aaa", "bbb", "ccc"] {
+            for ch in line.chars() {
+                g.print(ch);
+            }
+            g.carriage_return();
+            g.line_feed();
+        }
+        // "aaa" and "bbb" scrolled into scrollback; live screen shows "ccc".
+        assert_eq!(g.view_offset(), 0);
+        let live0: String = (0..3).map(|c| g.visible_cell(0, c).ch).collect();
+        assert_eq!(live0, "ccc");
+
+        // Up one line: the most-recent archived line "bbb" appears on top,
+        // pushing "ccc" down to row 1.
+        g.scroll_view(1);
+        assert_eq!(g.view_offset(), 1);
+        let row0: String = (0..3).map(|c| g.visible_cell(0, c).ch).collect();
+        let row1: String = (0..3).map(|c| g.visible_cell(1, c).ch).collect();
+        assert_eq!((row0.as_str(), row1.as_str()), ("bbb", "ccc"));
+
+        // Up another line reveals the oldest line "aaa" at the top.
+        g.scroll_view(1);
+        assert_eq!(g.view_offset(), 2);
+        let row0: String = (0..3).map(|c| g.visible_cell(0, c).ch).collect();
+        assert_eq!(row0, "aaa");
+    }
+
+    #[test]
+    fn scroll_view_clamps() {
+        let mut g = Grid::new(2, 3);
+        g.scroll_view(10); // nothing in scrollback yet
+        assert_eq!(g.view_offset(), 0);
+        g.scroll_view(-10);
+        assert_eq!(g.view_offset(), 0);
+    }
+
+    #[test]
+    fn cursor_visibility_toggles() {
+        let mut g = Grid::new(2, 2);
+        assert!(g.cursor_visible());
+        g.set_cursor_visible(false);
+        assert!(!g.cursor_visible());
     }
 }

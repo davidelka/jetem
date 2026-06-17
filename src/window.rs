@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
@@ -112,14 +112,48 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => self.redraw(),
             WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
-            WindowEvent::KeyboardInput { event, .. } => {
-                // Act on press only; the shell echoes the char back, which the
-                // parser then draws — so we never echo locally ourselves.
-                if event.state == ElementState::Pressed {
-                    if let Some(bytes) = encode_key(&event, self.mods) {
-                        let _ = self.writer.write_all(&bytes);
-                        let _ = self.writer.flush();
+            WindowEvent::MouseWheel { delta, .. } => {
+                let lines = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => (y * 3.0) as isize,
+                    MouseScrollDelta::PixelDelta(p) => (p.y / self.font.cell_h as f64) as isize,
+                };
+                if lines != 0 {
+                    self.grid.lock().unwrap().scroll_view(lines);
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
                     }
+                }
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                if event.state != ElementState::Pressed {
+                    return;
+                }
+                // Shift+PageUp/Down scroll the viewport locally — they are a
+                // terminal feature, not bytes for the shell.
+                if self.mods.shift_key() {
+                    if let Key::Named(key @ (NamedKey::PageUp | NamedKey::PageDown)) =
+                        event.logical_key
+                    {
+                        {
+                            let mut g = self.grid.lock().unwrap();
+                            let page = g.rows as isize - 1;
+                            g.scroll_view(if key == NamedKey::PageUp { page } else { -page });
+                        }
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
+                        return;
+                    }
+                }
+                // Any other key snaps back to the live screen, then is sent on.
+                // The shell echoes printable chars back, so we never echo locally.
+                self.grid.lock().unwrap().reset_view();
+                if let Some(bytes) = encode_key(&event, self.mods) {
+                    let _ = self.writer.write_all(&bytes);
+                    let _ = self.writer.flush();
+                }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
                 }
             }
             _ => {}
