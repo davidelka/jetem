@@ -2,9 +2,8 @@
 //! softbuffer surface, and repaints the shared grid whenever the reader thread
 //! signals new output (via a `UserEvent::Redraw` woken through the event loop).
 
-use std::io::Write;
 use std::num::NonZeroU32;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -14,9 +13,8 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::font::Font;
-use crate::pty::Pty;
+use crate::pane::{Rect, TerminalPane};
 use crate::render;
-use crate::screen::Screen;
 
 /// Wakes the event loop from the reader thread: "the grid changed, repaint."
 #[derive(Debug)]
@@ -25,15 +23,12 @@ pub enum UserEvent {
 }
 
 pub struct App {
-    screen: Arc<Mutex<Screen>>,
+    /// The (single, for 8a) terminal pane. M8b replaces this with a layout tree.
+    pane: TerminalPane,
     font: Font,
-    /// Owns the PTY master so we can resize it (SIGWINCH) when the window changes.
-    pty: Pty,
-    /// Our keystrokes go here -> PTY -> shell.
-    writer: Box<dyn Write + Send>,
     /// Latest modifier state (Ctrl/Shift/…), updated on `ModifiersChanged`.
     mods: ModifiersState,
-    /// Pixel size of the window, derived from the grid + font cell size.
+    /// Pixel size of the window.
     win_w: u32,
     win_h: u32,
     window: Option<Arc<Window>>,
@@ -43,21 +38,14 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(screen: Arc<Mutex<Screen>>, font: Font, pty: Pty, writer: Box<dyn Write + Send>) -> Self {
-        let (rows, cols) = {
-            let s = screen.lock().unwrap();
-            (s.rows(), s.cols())
-        };
-        let win_w = (cols * font.cell_w) as u32;
-        let win_h = (rows * font.cell_h) as u32;
+    pub fn new(pane: TerminalPane, font: Font) -> Self {
+        let rect = pane.rect();
         Self {
-            screen,
+            pane,
             font,
-            pty,
-            writer,
             mods: ModifiersState::empty(),
-            win_w,
-            win_h,
+            win_w: rect.w as u32,
+            win_h: rect.h as u32,
             window: None,
             surface: None,
             _context: None,
@@ -75,9 +63,11 @@ impl App {
             .unwrap();
 
         let mut buffer = surface.buffer_mut().unwrap();
+        buffer.fill(0); // gap/background behind panes
         {
-            let screen = self.screen.lock().unwrap();
-            render::paint(&mut buffer, w as usize, h as usize, screen.active(), &mut self.font);
+            let rect = self.pane.rect();
+            let screen = self.pane.screen().lock().unwrap();
+            render::paint(&mut buffer, w as usize, h as usize, rect, screen.active(), &mut self.font);
         }
         buffer.present().unwrap();
     }
@@ -88,17 +78,8 @@ impl App {
         if px_w == 0 || px_h == 0 {
             return; // ignore minimize / degenerate sizes
         }
-        let cols = (px_w as usize / self.font.cell_w).max(1);
-        let rows = (px_h as usize / self.font.cell_h).max(1);
-
-        {
-            let mut screen = self.screen.lock().unwrap();
-            if screen.rows() == rows && screen.cols() == cols {
-                return; // sub-cell pixel change; nothing to do
-            }
-            screen.resize(rows, cols);
-        }
-        let _ = self.pty.resize(rows as u16, cols as u16);
+        let rect = Rect::new(0, 0, px_w as usize, px_h as usize);
+        self.pane.resize_to(rect, self.font.cell_w, self.font.cell_h);
 
         if let Some(w) = &self.window {
             w.request_redraw();
@@ -145,7 +126,7 @@ impl ApplicationHandler<UserEvent> for App {
                     MouseScrollDelta::PixelDelta(p) => (p.y / self.font.cell_h as f64) as isize,
                 };
                 if lines != 0 {
-                    self.screen.lock().unwrap().active_mut().scroll_view(lines);
+                    self.pane.screen().lock().unwrap().active_mut().scroll_view(lines);
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
@@ -162,7 +143,7 @@ impl ApplicationHandler<UserEvent> for App {
                         event.logical_key
                     {
                         {
-                            let mut s = self.screen.lock().unwrap();
+                            let mut s = self.pane.screen().lock().unwrap();
                             let page = s.rows() as isize - 1;
                             s.active_mut()
                                 .scroll_view(if key == NamedKey::PageUp { page } else { -page });
@@ -175,10 +156,9 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 // Any other key snaps back to the live screen, then is sent on.
                 // The shell echoes printable chars back, so we never echo locally.
-                self.screen.lock().unwrap().active_mut().reset_view();
+                self.pane.screen().lock().unwrap().active_mut().reset_view();
                 if let Some(bytes) = encode_key(&event, self.mods) {
-                    let _ = self.writer.write_all(&bytes);
-                    let _ = self.writer.flush();
+                    self.pane.write_input(&bytes);
                 }
                 if let Some(w) = &self.window {
                     w.request_redraw();

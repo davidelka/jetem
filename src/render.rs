@@ -5,6 +5,7 @@
 use crate::cell::{attr, Color};
 use crate::font::Font;
 use crate::grid::Grid;
+use crate::pane::Rect;
 
 type Rgb = (u8, u8, u8);
 
@@ -71,12 +72,13 @@ fn blend(fg: Rgb, dst: u32, coverage: u8) -> u32 {
     (r << 16) | (g << 8) | b
 }
 
-/// Paint the whole grid into `buf` (a `width * height` framebuffer).
-pub fn paint(buf: &mut [u32], width: usize, height: usize, grid: &Grid, font: &mut Font) {
+/// Paint `grid` into the `rect` sub-region of `buf` (a `width * height`
+/// framebuffer). The caller clears any gaps between panes.
+pub fn paint(buf: &mut [u32], width: usize, height: usize, rect: Rect, grid: &Grid, font: &mut Font) {
     let (cw, ch_, base) = (font.cell_w, font.cell_h, font.baseline);
 
-    // Clear to the default background first.
-    buf.fill(pack(DEFAULT_BG));
+    // Clear this pane's background.
+    fill_rect(buf, width, height, rect.x, rect.y, rect.w, rect.h, pack(DEFAULT_BG));
 
     // The block cursor is only shown on the live screen (not while scrolled
     // into history) and only when the program hasn't hidden it.
@@ -104,8 +106,8 @@ pub fn paint(buf: &mut [u32], width: usize, height: usize, grid: &Grid, font: &m
                 std::mem::swap(&mut fg, &mut bg);
             }
 
-            let x0 = col * cw;
-            let y0 = row * ch_;
+            let x0 = rect.x + col * cw;
+            let y0 = rect.y + row * ch_;
             fill_rect(buf, width, height, x0, y0, cw, ch_, pack(bg));
 
             if cell.ch != ' ' {

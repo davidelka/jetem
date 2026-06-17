@@ -9,20 +9,14 @@
 mod cell;
 mod font;
 mod grid;
+mod pane;
 mod parser;
 mod pty;
 mod render;
 mod screen;
 mod window;
 
-use std::io::Read;
-use std::sync::{Arc, Mutex};
-use std::thread;
-
-use parser::Performer;
-use pty::Pty;
-use screen::Screen;
-use vte::Parser;
+use pane::{Rect, TerminalPane};
 use winit::event_loop::EventLoop;
 use window::{App, UserEvent};
 
@@ -33,42 +27,18 @@ const FONT_PX: f32 = 16.0;
 
 fn main() -> anyhow::Result<()> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    let pty = Pty::spawn(&shell, ROWS, COLS)?;
-
-    let screen = Arc::new(Mutex::new(Screen::new(ROWS as usize, COLS as usize)));
     let font = font::Font::load(FONT_PATH, FONT_PX)?;
 
-    // The event loop carries our custom `UserEvent` so the reader thread can
+    // The event loop carries our custom `UserEvent` so pane reader threads can
     // wake it to repaint.
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
 
-    // Reader thread: shell output -> parse into the shared screen -> wake the UI.
-    let mut reader = pty.reader()?;
-    {
-        let screen = screen.clone();
-        thread::spawn(move || {
-            let mut vte = Parser::new();
-            let mut buf = [0u8; 4096];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        {
-                            let mut s = screen.lock().unwrap();
-                            let mut perf = Performer { screen: &mut s };
-                            vte.advance(&mut perf, &buf[..n]);
-                        }
-                        // Ignore the error if the window has already closed.
-                        let _ = proxy.send_event(UserEvent::Redraw);
-                    }
-                }
-            }
-        });
-    }
+    // One full-window terminal pane to start; M8b adds splits.
+    let rect = Rect::new(0, 0, COLS as usize * font.cell_w, ROWS as usize * font.cell_h);
+    let pane = TerminalPane::spawn(&shell, rect, font.cell_w, font.cell_h, proxy)?;
 
-    let writer = pty.writer()?;
-    let mut app = App::new(screen, font, pty, writer);
+    let mut app = App::new(pane, font);
     event_loop.run_app(&mut app)?;
     Ok(())
 }
