@@ -98,13 +98,25 @@ impl BlockTracker {
         self.command_mark = Some((row, col));
     }
 
-    /// `C`: read the command text from `grid` (between the B mark and the
-    /// cursor) and open a block to collect output.
+    /// `C` with no explicit command: read the command text from `grid` (between
+    /// the B mark and the cursor). Fallback for integrations that don't send the
+    /// command — fragile with themed prompts, hence the explicit path below.
     pub fn output_start(&mut self, grid: &Grid) {
         let command = match self.command_mark.take() {
             Some(mark) => grid.text_between(mark, (grid.cursor_row, grid.cursor_col)),
             None => String::new(),
         };
+        self.open_block(command);
+    }
+
+    /// `C` with the exact command supplied by the shell (preferred — robust
+    /// regardless of prompt theme).
+    pub fn output_start_with_command(&mut self, command: String) {
+        self.command_mark = None;
+        self.open_block(command);
+    }
+
+    fn open_block(&mut self, command: String) {
         self.open = Some(OpenBlock {
             command,
             output: String::new(),
@@ -169,6 +181,41 @@ pub fn load_history() -> Vec<Block> {
         .lines()
         .filter_map(|line| serde_json::from_str::<Block>(line).ok())
         .collect()
+}
+
+/// Decode a base64 OSC payload into a command string (the shell sends the exact
+/// command base64-encoded so arbitrary characters survive the OSC channel).
+pub fn decode_command(payload: &[u8]) -> Option<String> {
+    String::from_utf8(base64_decode(payload)?).ok()
+}
+
+/// Minimal standard-base64 decoder (no external dependency).
+fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let mut out = Vec::new();
+    let mut buf = 0u32;
+    let mut bits = 0u32;
+    for &c in input {
+        if c == b'=' || c == b'\n' || c == b'\r' {
+            continue;
+        }
+        buf = (buf << 6) | val(c)?;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Some(out)
 }
 
 fn now_ms() -> u64 {

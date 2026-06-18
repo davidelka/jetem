@@ -6,6 +6,10 @@ use crate::cell::{attr, Color};
 use crate::font::Font;
 use crate::grid::Grid;
 use crate::pane::Rect;
+use crate::selection::Selection;
+
+/// Background tint for selected cells.
+const SELECTION_BG: Rgb = (38, 64, 102);
 
 type Rgb = (u8, u8, u8);
 
@@ -83,6 +87,7 @@ pub fn paint(
     grid: &Grid,
     font: &mut Font,
     focused: bool,
+    sel: Option<&Selection>,
 ) {
     let (cw, ch_, base) = (font.cell_w, font.cell_h, font.baseline);
 
@@ -113,6 +118,11 @@ pub fn paint(
             let is_cursor = show_cursor && row == grid.cursor_row && col == grid.cursor_col;
             if (cell.attrs & attr::REVERSE != 0) ^ is_cursor {
                 std::mem::swap(&mut fg, &mut bg);
+            }
+
+            // Selection tint overrides the background.
+            if sel.is_some_and(|s| s.contains(row, col)) {
+                bg = SELECTION_BG;
             }
 
             let x0 = rect.x + col * cw;

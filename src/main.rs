@@ -17,6 +17,7 @@ mod pty;
 mod recall;
 mod render;
 mod screen;
+mod selection;
 mod window;
 
 use pane::Rect;

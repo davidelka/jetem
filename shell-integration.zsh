@@ -26,10 +26,14 @@ __term_precmd() {
   __term_osc "7;file://${HOST}${PWD}"
 }
 
-# Just before running a command: mark output start.
+# Just before running a command: mark output start and send the exact command
+# line (base64-encoded so any characters survive the OSC channel). This is more
+# robust than reading the command off the screen for themed/multi-line prompts.
 __term_preexec() {
   __term_command_running=1
-  __term_osc "133;C"
+  local enc
+  enc=$(print -rn -- "$1" | base64 | tr -d '\n')
+  __term_osc "133;C;${enc}"
 }
 
 # Mark command start at the END of the prompt (where you start typing), so the

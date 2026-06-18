@@ -33,7 +33,12 @@ impl Perform for Performer<'_> {
                     let g = self.screen.active();
                     self.blocks.command_start(g.cursor_row, g.cursor_col);
                 }
-                Some(b"C") => self.blocks.output_start(self.screen.active()),
+                Some(b"C") => match params.get(2).and_then(|p| crate::block::decode_command(p)) {
+                    // The shell sent the exact command (base64) — robust.
+                    Some(cmd) => self.blocks.output_start_with_command(cmd),
+                    // Fallback: read the command off the grid.
+                    None => self.blocks.output_start(self.screen.active()),
+                },
                 Some(b"D") => {
                     let code = params
                         .get(2)
@@ -301,6 +306,15 @@ mod tests {
         assert_eq!(b.command, "ls");
         assert_eq!(b.output, "out");
         assert_eq!(b.exit_code, Some(0));
+    }
+
+    #[test]
+    fn osc133_explicit_command_from_payload() {
+        // C carries base64("git push"); the captured command must be exact,
+        // independent of whatever is on the grid.
+        let bytes = b"PROMPT$ \x1b]133;C;Z2l0IHB1c2g=\x07out\x1b]133;D;0\x07";
+        let blocks = run_blocks(bytes, 4, 40);
+        assert_eq!(blocks.last().unwrap().command, "git push");
     }
 
     #[test]

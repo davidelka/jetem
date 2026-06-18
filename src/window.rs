@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
-use winit::keyboard::{Key, ModifiersState, NamedKey};
+use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use crate::font::Font;
@@ -18,6 +18,7 @@ use crate::layout::{Layout, PaneId, SplitDir};
 use crate::pane::{Rect, TerminalPane};
 use crate::recall::Recall;
 use crate::render;
+use crate::selection::Selection;
 
 /// Wakes the event loop from a pane reader thread: "output changed, repaint."
 #[derive(Debug)]
@@ -51,6 +52,14 @@ pub struct App {
     pending_prefix: bool,
     /// The command-recall overlay, when open (captures input + drawn on top).
     overlay: Option<Recall>,
+    /// Active text selection (mouse drag), if any.
+    selection: Option<Selection>,
+    /// True while the left button is held (extending a selection).
+    selecting: bool,
+    /// Latest mouse position in pixels.
+    cursor_px: (f64, f64),
+    /// System clipboard; `None` if it failed to initialize.
+    clipboard: Option<arboard::Clipboard>,
     win_w: u32,
     win_h: u32,
     window: Option<Arc<Window>>,
@@ -81,6 +90,10 @@ impl App {
             mods: ModifiersState::empty(),
             pending_prefix: false,
             overlay: None,
+            selection: None,
+            selecting: false,
+            cursor_px: (0.0, 0.0),
+            clipboard: arboard::Clipboard::new().ok(),
             win_w: initial.w as u32,
             win_h: initial.h as u32,
             window: None,
@@ -244,6 +257,65 @@ impl App {
         }
     }
 
+    /// Map a pixel position to (pane, row, col) of the pane under it.
+    fn cell_at(&self, px: f64, py: f64) -> Option<(PaneId, usize, usize)> {
+        for (id, p) in &self.panes {
+            let r = p.rect();
+            if px >= r.x as f64
+                && px < (r.x + r.w) as f64
+                && py >= r.y as f64
+                && py < (r.y + r.h) as f64
+            {
+                let col = ((px - r.x as f64) / self.font.cell_w as f64) as usize;
+                let row = ((py - r.y as f64) / self.font.cell_h as f64) as usize;
+                let (rows, cols) = {
+                    let s = p.screen().lock().unwrap();
+                    (s.rows(), s.cols())
+                };
+                return Some((
+                    *id,
+                    row.min(rows.saturating_sub(1)),
+                    col.min(cols.saturating_sub(1)),
+                ));
+            }
+        }
+        None
+    }
+
+    /// Copy the current selection to the system clipboard.
+    fn copy_selection(&mut self) {
+        let text = match &self.selection {
+            Some(sel) => match self.panes.get(&sel.pane) {
+                Some(p) => {
+                    let s = p.screen().lock().unwrap();
+                    sel.text(s.active())
+                }
+                None => return,
+            },
+            None => return,
+        };
+        if text.is_empty() {
+            return;
+        }
+        if let Some(cb) = &mut self.clipboard {
+            let _ = cb.set_text(text);
+        }
+    }
+
+    /// Paste the clipboard into the focused pane.
+    fn paste(&mut self) {
+        let text = match &mut self.clipboard {
+            Some(cb) => cb.get_text().unwrap_or_default(),
+            None => return,
+        };
+        if text.is_empty() {
+            return;
+        }
+        if let Some(p) = self.panes.get_mut(&self.focused) {
+            p.write_input(text.as_bytes());
+        }
+    }
+
     fn redraw(&mut self) {
         let (Some(window), Some(surface)) = (&self.window, &mut self.surface) else {
             return;
@@ -259,6 +331,7 @@ impl App {
         for (id, pane) in &self.panes {
             let rect = pane.rect();
             let focused = *id == self.focused;
+            let sel = self.selection.as_ref().filter(|s| s.pane == *id);
             let screen = pane.screen().lock().unwrap();
             render::paint(
                 &mut buffer,
@@ -268,6 +341,7 @@ impl App {
                 screen.active(),
                 &mut self.font,
                 focused,
+                sel,
             );
         }
         if self.panes.len() > 1 {
@@ -330,6 +404,36 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::RedrawRequested => self.redraw(),
             WindowEvent::Resized(size) => self.on_resize(size.width, size.height),
             WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor_px = (position.x, position.y);
+                if self.selecting {
+                    if let (Some((pane, row, col)), Some(sel)) =
+                        (self.cell_at(position.x, position.y), self.selection.as_mut())
+                    {
+                        if pane == sel.pane {
+                            sel.set_head((row, col));
+                            if let Some(w) = &self.window {
+                                w.request_redraw();
+                            }
+                        }
+                    }
+                }
+            }
+            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
+                match state {
+                    ElementState::Pressed => {
+                        let (px, py) = self.cursor_px;
+                        self.selection = self.cell_at(px, py).map(|(pane, row, col)| {
+                            Selection::new(pane, (row, col))
+                        });
+                        self.selecting = true;
+                    }
+                    ElementState::Released => self.selecting = false,
+                }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
             WindowEvent::MouseWheel { delta, .. } => {
                 let lines = match delta {
                     MouseScrollDelta::LineDelta(_, y) => (y * 3.0) as isize,
@@ -347,6 +451,23 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state != ElementState::Pressed {
                     return;
+                }
+                // Ctrl-Shift-C / Ctrl-Shift-V: clipboard, handled before the
+                // shell's Ctrl-C (SIGINT) and normal input. Match the physical
+                // key so it's reliable regardless of how modifiers affect the
+                // logical key.
+                if self.mods.control_key() && self.mods.shift_key() {
+                    match event.physical_key {
+                        PhysicalKey::Code(KeyCode::KeyC) => {
+                            self.copy_selection();
+                            return;
+                        }
+                        PhysicalKey::Code(KeyCode::KeyV) => {
+                            self.paste();
+                            return;
+                        }
+                        _ => {}
+                    }
                 }
                 // The recall overlay captures all input while it's open.
                 if self.overlay.is_some() {
@@ -393,6 +514,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 // Any other key snaps the focused pane to the bottom and is sent
                 // on. The shell echoes printable chars back, so no local echo.
+                self.selection = None; // typing clears the highlight
                 if let Some(p) = self.panes.get(&self.focused) {
                     p.screen().lock().unwrap().active_mut().reset_view();
                 }
