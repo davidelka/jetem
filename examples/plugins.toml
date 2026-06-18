@@ -1,0 +1,5 @@
+# Sample plugin config. Copy to ~/.config/terminal/plugins.toml and adjust paths.
+# Plugins are explicit opt-in — nothing runs unless listed here.
+
+[[plugin]]
+command = "python3 /home/david/projects/terminal/examples/plugins/hello.py"

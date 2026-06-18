@@ -16,14 +16,18 @@ use winit::window::{Window, WindowId};
 use crate::font::Font;
 use crate::layout::{Layout, PaneId, SplitDir};
 use crate::pane::{Rect, TerminalPane};
+use crate::plugin::{Plugin, PluginId, PluginInbound, Registry};
 use crate::recall::Recall;
 use crate::render;
 use crate::selection::Selection;
 
-/// Wakes the event loop from a pane reader thread: "output changed, repaint."
+/// Events delivered to the winit loop from background threads.
 #[derive(Debug)]
 pub enum UserEvent {
+    /// A pane's output changed — repaint.
     Redraw,
+    /// A message arrived from plugin `id`.
+    Plugin { id: PluginId, msg: PluginInbound },
 }
 
 /// Pixels of divider left between panes, and the focus-border thickness.
@@ -46,6 +50,9 @@ pub struct App {
     /// Cloned per new pane so its reader thread can wake the loop.
     proxy: EventLoopProxy<UserEvent>,
     shell: String,
+    /// Running plugins and what they've registered.
+    plugins: HashMap<PluginId, Plugin>,
+    registry: Registry,
     font: Font,
     mods: ModifiersState,
     /// True after the Ctrl-A prefix, until the next (command) key.
@@ -73,12 +80,17 @@ impl App {
         proxy: EventLoopProxy<UserEvent>,
         shell: String,
         initial: Rect,
+        plugins: HashMap<PluginId, Plugin>,
     ) -> anyhow::Result<Self> {
         let first =
             TerminalPane::spawn(&shell, initial, font.cell_w, font.cell_h, proxy.clone())?;
         let id: PaneId = 0;
         let mut panes = HashMap::new();
         panes.insert(id, first);
+        // Kick off the handshake with every plugin.
+        for p in plugins.values() {
+            p.initialize();
+        }
         Ok(Self {
             panes,
             layout: Layout::Leaf(id),
@@ -86,6 +98,8 @@ impl App {
             next_id: 1,
             proxy,
             shell,
+            plugins,
+            registry: Registry::default(),
             font,
             mods: ModifiersState::empty(),
             pending_prefix: false,
@@ -195,6 +209,15 @@ impl App {
 
     /// Handle the key pressed right after the Ctrl-A prefix.
     fn handle_prefix_command(&mut self, event_loop: &ActiveEventLoop, event: &KeyEvent) {
+        // A plugin keybinding (e.g. "prefix |") takes priority over the built-ins.
+        if let Some(chord) = chord_string(event) {
+            if let Some((command, pid)) = self.registry.command_for_chord(&chord) {
+                if let Some(p) = self.plugins.get(&pid) {
+                    p.invoke(&command);
+                }
+                return;
+            }
+        }
         match &event.logical_key {
             Key::Character(s) => match s.as_str() {
                 "|" | "v" => self.split(SplitDir::LeftRight),
@@ -328,6 +351,78 @@ impl App {
         }
     }
 
+    /// Handle a message from a plugin (runs on the main thread).
+    fn handle_plugin_message(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        id: PluginId,
+        msg: PluginInbound,
+    ) {
+        match msg {
+            PluginInbound::Manifest(m) => self.registry.apply_manifest(id, &m),
+            PluginInbound::HostAction {
+                id: req_id,
+                method,
+                params,
+            } => {
+                let ok = self.apply_host_action(event_loop, &method, &params);
+                if let Some(p) = self.plugins.get(&id) {
+                    p.reply(req_id, ok);
+                }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
+            PluginInbound::Closed => {
+                self.plugins.remove(&id);
+            }
+        }
+    }
+
+    /// Perform a `host/*` action requested by a plugin. Reuses existing actions.
+    fn apply_host_action(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        method: &str,
+        params: &serde_json::Value,
+    ) -> bool {
+        match method {
+            "host/splitPane" => {
+                let dir = match params.get("dir").and_then(|d| d.as_str()) {
+                    Some("topbottom") => SplitDir::TopBottom,
+                    _ => SplitDir::LeftRight,
+                };
+                self.split(dir);
+                true
+            }
+            "host/focusPane" => {
+                let dir = match params.get("dir").and_then(|d| d.as_str()) {
+                    Some("left") => FocusDir::Left,
+                    Some("right") => FocusDir::Right,
+                    Some("up") => FocusDir::Up,
+                    Some("down") => FocusDir::Down,
+                    _ => return false,
+                };
+                self.focus_dir(dir);
+                true
+            }
+            "host/closePane" => {
+                self.close_focused(event_loop);
+                true
+            }
+            "host/writeToFocusedPane" => {
+                if let Some(text) = params.get("text").and_then(|t| t.as_str()) {
+                    if let Some(p) = self.panes.get_mut(&self.focused) {
+                        p.write_input(text.as_bytes());
+                    }
+                    return true;
+                }
+                false
+            }
+            _ => false, // unknown action
+        }
+    }
+
     fn redraw(&mut self) {
         let (Some(window), Some(surface)) = (&self.window, &mut self.surface) else {
             return;
@@ -403,10 +498,14 @@ impl ApplicationHandler<UserEvent> for App {
         self.redraw();
     }
 
-    /// The reader thread signalled new output — ask the window to repaint.
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: UserEvent) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+        match event {
+            UserEvent::Redraw => {
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+            UserEvent::Plugin { id, msg } => self.handle_plugin_message(event_loop, id, msg),
         }
     }
 
@@ -581,6 +680,18 @@ fn encode_key(event: &KeyEvent, mods: ModifiersState) -> Option<Vec<u8>> {
         },
         // Printable text (already layout/shift-resolved by winit).
         Key::Character(s) => Some(s.as_bytes().to_vec()),
+        _ => None,
+    }
+}
+
+/// The chord string a plugin keybinding matches, e.g. "prefix |" / "prefix up".
+fn chord_string(event: &KeyEvent) -> Option<String> {
+    match &event.logical_key {
+        Key::Character(s) => Some(format!("prefix {s}")),
+        Key::Named(NamedKey::ArrowUp) => Some("prefix up".into()),
+        Key::Named(NamedKey::ArrowDown) => Some("prefix down".into()),
+        Key::Named(NamedKey::ArrowLeft) => Some("prefix left".into()),
+        Key::Named(NamedKey::ArrowRight) => Some("prefix right".into()),
         _ => None,
     }
 }

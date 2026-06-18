@@ -8,11 +8,13 @@
 
 mod block;
 mod cell;
+mod config;
 mod font;
 mod grid;
 mod layout;
 mod pane;
 mod parser;
+mod plugin;
 mod pty;
 mod recall;
 mod render;
@@ -20,7 +22,10 @@ mod screen;
 mod selection;
 mod window;
 
+use std::collections::HashMap;
+
 use pane::Rect;
+use plugin::Plugin;
 use winit::event_loop::EventLoop;
 use window::{App, UserEvent};
 
@@ -38,9 +43,19 @@ fn main() -> anyhow::Result<()> {
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
 
+    // Spawn configured plugins (explicit opt-in via ~/.config/terminal/plugins.toml).
+    let mut plugins = HashMap::new();
+    for (id, pc) in config::load().plugin.iter().enumerate() {
+        if let Some(p) = Plugin::spawn(id, &pc.command, proxy.clone()) {
+            plugins.insert(id, p);
+        } else {
+            eprintln!("[terminal] failed to spawn plugin: {}", pc.command);
+        }
+    }
+
     // Start with one full-window pane; Ctrl-A splits create more.
     let rect = Rect::new(0, 0, COLS as usize * font.cell_w, ROWS as usize * font.cell_h);
-    let mut app = App::new(font, proxy, shell, rect)?;
+    let mut app = App::new(font, proxy, shell, rect, plugins)?;
     event_loop.run_app(&mut app)?;
     Ok(())
 }
