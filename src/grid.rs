@@ -275,6 +275,39 @@ impl Grid {
 
     // --- debugging / headless rendering ----------------------------------
 
+    /// The text from `from` to `to` (inclusive of `from`, exclusive of `to`),
+    /// reading across rows. Used to capture a typed command between OSC marks.
+    pub fn text_between(&self, from: (usize, usize), to: (usize, usize)) -> String {
+        let (r0, c0) = from;
+        let (r1, c1) = to;
+        if r1 < r0 || r0 >= self.rows {
+            return String::new();
+        }
+        let mut s = String::new();
+        if r0 == r1 {
+            for c in c0..c1.min(self.cols) {
+                s.push(self.cell(r0, c).ch);
+            }
+        } else {
+            for c in c0..self.cols {
+                s.push(self.cell(r0, c).ch);
+            }
+            for r in (r0 + 1)..r1.min(self.rows) {
+                s.push('\n');
+                for c in 0..self.cols {
+                    s.push(self.cell(r, c).ch);
+                }
+            }
+            if r1 < self.rows {
+                s.push('\n');
+                for c in 0..c1.min(self.cols) {
+                    s.push(self.cell(r1, c).ch);
+                }
+            }
+        }
+        s.trim_end().to_string()
+    }
+
     /// Render the grid as plain text (one line per row), for headless dumps.
     pub fn to_text(&self) -> String {
         let mut s = String::with_capacity(self.rows * (self.cols + 1));

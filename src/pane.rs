@@ -12,6 +12,7 @@ use std::thread;
 use vte::Parser;
 use winit::event_loop::EventLoopProxy;
 
+use crate::block::BlockTracker;
 use crate::parser::Performer;
 use crate::pty::Pty;
 use crate::screen::Screen;
@@ -37,6 +38,8 @@ impl Rect {
 pub struct TerminalPane {
     pty: Pty,
     screen: Arc<Mutex<Screen>>,
+    /// Command blocks captured from this shell's OSC 133 marks.
+    blocks: Arc<Mutex<BlockTracker>>,
     writer: Box<dyn Write + Send>,
     rect: Rect,
 }
@@ -56,10 +59,12 @@ impl TerminalPane {
 
         let pty = Pty::spawn(shell, rows as u16, cols as u16)?;
         let screen = Arc::new(Mutex::new(Screen::new(rows, cols)));
+        let blocks = Arc::new(Mutex::new(BlockTracker::new()));
 
         let mut reader = pty.reader()?;
         {
             let screen = screen.clone();
+            let blocks = blocks.clone();
             thread::spawn(move || {
                 let mut vte = Parser::new();
                 let mut buf = [0u8; 4096];
@@ -68,8 +73,13 @@ impl TerminalPane {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
                             {
+                                // Always lock screen before blocks (consistent order).
                                 let mut s = screen.lock().unwrap();
-                                let mut perf = Performer { screen: &mut s };
+                                let mut b = blocks.lock().unwrap();
+                                let mut perf = Performer {
+                                    screen: &mut s,
+                                    blocks: &mut b,
+                                };
                                 vte.advance(&mut perf, &buf[..n]);
                             }
                             let _ = proxy.send_event(UserEvent::Redraw);
@@ -83,6 +93,7 @@ impl TerminalPane {
         Ok(Self {
             pty,
             screen,
+            blocks,
             writer,
             rect,
         })
@@ -94,6 +105,10 @@ impl TerminalPane {
 
     pub fn screen(&self) -> &Arc<Mutex<Screen>> {
         &self.screen
+    }
+
+    pub fn blocks(&self) -> &Arc<Mutex<BlockTracker>> {
+        &self.blocks
     }
 
     /// Forward keystrokes to the shell.

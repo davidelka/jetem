@@ -5,30 +5,63 @@
 
 use vte::{Params, Perform};
 
+use crate::block::BlockTracker;
 use crate::cell::{attr, Color};
 use crate::screen::Screen;
 
-/// Holds a mutable borrow of the screen for the duration of one `advance()`
-/// call. All output is routed to the screen's currently-active buffer, so an
-/// app can flip to the alternate screen mid-chunk and keep drawing.
+/// Holds a mutable borrow of the screen (and the block tracker) for the duration
+/// of one `advance()` call. Output is routed to the screen's active buffer; OSC
+/// 133 marks drive the tracker so we capture command blocks.
 pub struct Performer<'a> {
     pub screen: &'a mut Screen,
+    pub blocks: &'a mut BlockTracker,
 }
 
 impl Perform for Performer<'_> {
     /// A printable character arrived.
     fn print(&mut self, c: char) {
         self.screen.active_mut().print(c);
+        self.blocks.feed_output(c);
+    }
+
+    /// OSC strings: we care about 133 (semantic prompts) and 7 (cwd).
+    fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
+        match params.first().copied() {
+            Some(b"133") => match params.get(1).copied() {
+                Some(b"A") => self.blocks.prompt_start(),
+                Some(b"B") => {
+                    let g = self.screen.active();
+                    self.blocks.command_start(g.cursor_row, g.cursor_col);
+                }
+                Some(b"C") => self.blocks.output_start(self.screen.active()),
+                Some(b"D") => {
+                    let code = params
+                        .get(2)
+                        .and_then(|p| std::str::from_utf8(p).ok())
+                        .and_then(|s| s.parse::<i32>().ok());
+                    self.blocks.command_end(code);
+                }
+                _ => {}
+            },
+            Some(b"7") => {
+                if let Some(uri) = params.get(1) {
+                    self.blocks.set_cwd_from_uri(uri);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// A C0 control byte (newline, tab, …).
     fn execute(&mut self, byte: u8) {
-        let g = self.screen.active_mut();
         match byte {
-            b'\n' | 0x0b | 0x0c => g.line_feed(), // LF, vertical tab, form feed
-            b'\r' => g.carriage_return(),
-            b'\t' => g.tab(),
-            0x08 => g.backspace(),
+            b'\n' | 0x0b | 0x0c => {
+                self.screen.active_mut().line_feed(); // LF, vertical tab, form feed
+                self.blocks.feed_output('\n');
+            }
+            b'\r' => self.screen.active_mut().carriage_return(),
+            b'\t' => self.screen.active_mut().tab(),
+            0x08 => self.screen.active_mut().backspace(),
             _ => {}
         }
     }
@@ -178,10 +211,27 @@ mod tests {
     /// Feed raw bytes through a real `vte::Parser` into a fresh screen.
     fn run(bytes: &[u8], rows: usize, cols: usize) -> Screen {
         let mut screen = Screen::new(rows, cols);
+        let mut blocks = BlockTracker::new_in_memory();
         let mut parser = Parser::new();
-        let mut perf = Performer { screen: &mut screen };
+        let mut perf = Performer {
+            screen: &mut screen,
+            blocks: &mut blocks,
+        };
         parser.advance(&mut perf, bytes);
         screen
+    }
+
+    /// Like `run`, but returns the block tracker for OSC 133 tests.
+    fn run_blocks(bytes: &[u8], rows: usize, cols: usize) -> BlockTracker {
+        let mut screen = Screen::new(rows, cols);
+        let mut blocks = BlockTracker::new_in_memory();
+        let mut parser = Parser::new();
+        let mut perf = Performer {
+            screen: &mut screen,
+            blocks: &mut blocks,
+        };
+        parser.advance(&mut perf, bytes);
+        blocks
     }
 
     #[test]
@@ -239,5 +289,25 @@ mod tests {
         let s = run(b"AB\x1b[?1049hZZ\x1b[?1049l", 1, 4);
         assert_eq!(s.active().cell(0, 0).ch, 'A');
         assert_eq!(s.active().cell(0, 1).ch, 'B');
+    }
+
+    #[test]
+    fn osc133_captures_command_block() {
+        // A (prompt) | B (mark at 0,0) | "ls" typed | C (capture "ls") |
+        // "out" output | D;0 (close, exit 0).
+        let bytes = b"\x1b]133;A\x07\x1b]133;B\x07ls\x1b]133;C\x07out\x1b]133;D;0\x07";
+        let blocks = run_blocks(bytes, 4, 20);
+        let b = blocks.last().expect("a block was captured");
+        assert_eq!(b.command, "ls");
+        assert_eq!(b.output, "out");
+        assert_eq!(b.exit_code, Some(0));
+    }
+
+    #[test]
+    fn osc133_captures_nonzero_exit() {
+        let bytes = b"\x1b]133;B\x07false\x1b]133;C\x07\x1b]133;D;1\x07";
+        let blocks = run_blocks(bytes, 4, 20);
+        assert_eq!(blocks.last().unwrap().exit_code, Some(1));
+        assert_eq!(blocks.last().unwrap().command, "false");
     }
 }
