@@ -13,6 +13,7 @@ use vte::Parser;
 use winit::event_loop::EventLoopProxy;
 
 use crate::block::BlockTracker;
+use crate::layout::PaneId;
 use crate::parser::Performer;
 use crate::pty::Pty;
 use crate::screen::Screen;
@@ -48,6 +49,7 @@ impl TerminalPane {
     /// Spawn `shell` sized to `rect` (in pixels, divided by the cell size). The
     /// reader thread wakes the event loop via `proxy` whenever output arrives.
     pub fn spawn(
+        id: PaneId,
         shell: &str,
         rect: Rect,
         cell_w: usize,
@@ -72,7 +74,7 @@ impl TerminalPane {
                     match reader.read(&mut buf) {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
-                            {
+                            let finished = {
                                 // Always lock screen before blocks (consistent order).
                                 let mut s = screen.lock().unwrap();
                                 let mut b = blocks.lock().unwrap();
@@ -81,6 +83,10 @@ impl TerminalPane {
                                     blocks: &mut b,
                                 };
                                 vte.advance(&mut perf, &buf[..n]);
+                                b.drain_completed()
+                            };
+                            for block in finished {
+                                let _ = proxy.send_event(UserEvent::Block { pane: id, block });
                             }
                             let _ = proxy.send_event(UserEvent::Redraw);
                         }

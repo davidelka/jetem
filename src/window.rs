@@ -5,6 +5,9 @@
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
+use std::time::Instant;
+
+use serde_json::{json, Value};
 
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -13,6 +16,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+use crate::block::Block;
 use crate::font::Font;
 use crate::layout::{Layout, PaneId, SplitDir};
 use crate::pane::{Rect, TerminalPane};
@@ -28,6 +32,8 @@ pub enum UserEvent {
     Redraw,
     /// A message arrived from plugin `id`.
     Plugin { id: PluginId, msg: PluginInbound },
+    /// A command block finished in `pane` — emit a `command_end` event.
+    Block { pane: PaneId, block: Block },
 }
 
 /// Pixels of divider left between panes, and the focus-border thickness.
@@ -59,6 +65,8 @@ pub struct App {
     pending_prefix: bool,
     /// The command-recall overlay, when open (captures input + drawn on top).
     overlay: Option<Recall>,
+    /// A transient toast message from `host/notify` and when it was shown.
+    toast: Option<(String, Instant)>,
     /// Active text selection (mouse drag), if any.
     selection: Option<Selection>,
     /// True while the left button is held (extending a selection).
@@ -82,9 +90,9 @@ impl App {
         initial: Rect,
         plugins: HashMap<PluginId, Plugin>,
     ) -> anyhow::Result<Self> {
-        let first =
-            TerminalPane::spawn(&shell, initial, font.cell_w, font.cell_h, proxy.clone())?;
         let id: PaneId = 0;
+        let first =
+            TerminalPane::spawn(id, &shell, initial, font.cell_w, font.cell_h, proxy.clone())?;
         let mut panes = HashMap::new();
         panes.insert(id, first);
         // Kick off the handshake with every plugin.
@@ -104,6 +112,7 @@ impl App {
             mods: ModifiersState::empty(),
             pending_prefix: false,
             overlay: None,
+            toast: None,
             selection: None,
             selecting: false,
             cursor_px: (0.0, 0.0),
@@ -133,6 +142,7 @@ impl App {
         let new_id = self.next_id;
         let tmp = Rect::new(0, 0, self.win_w as usize, self.win_h as usize);
         let pane = match TerminalPane::spawn(
+            new_id,
             &self.shell,
             tmp,
             self.font.cell_w,
@@ -208,8 +218,12 @@ impl App {
     }
 
     /// Handle the key pressed right after the Ctrl-A prefix.
-    fn handle_prefix_command(&mut self, event_loop: &ActiveEventLoop, event: &KeyEvent) {
-        // A plugin keybinding (e.g. "prefix |") takes priority over the built-ins.
+    ///
+    /// Multiplexing (split/focus/close) now lives in the `mux` plugin (the M10
+    /// dogfood): plugin keybindings are looked up in the registry. The core only
+    /// keeps `r` (recall, which needs in-process state) and `a` (literal Ctrl-A).
+    fn handle_prefix_command(&mut self, _event_loop: &ActiveEventLoop, event: &KeyEvent) {
+        // A plugin keybinding (e.g. "prefix |") — the multiplexer lives here.
         if let Some(chord) = chord_string(event) {
             if let Some((command, pid)) = self.registry.command_for_chord(&chord) {
                 if let Some(p) = self.plugins.get(&pid) {
@@ -218,23 +232,16 @@ impl App {
                 return;
             }
         }
-        match &event.logical_key {
-            Key::Character(s) => match s.as_str() {
-                "|" | "v" => self.split(SplitDir::LeftRight),
-                "-" | "s" => self.split(SplitDir::TopBottom),
-                "x" => self.close_focused(event_loop),
+        if let Key::Character(s) = &event.logical_key {
+            match s.as_str() {
                 "r" => {
-                    // Include this session's in-memory blocks from every pane.
+                    // Recall reads in-process block state, so it stays in core.
                     let mut session = Vec::new();
                     for p in self.panes.values() {
                         session.extend(p.blocks().lock().unwrap().history().iter().cloned());
                     }
                     self.overlay = Some(Recall::open(session));
                 }
-                "h" => self.focus_dir(FocusDir::Left),
-                "l" => self.focus_dir(FocusDir::Right),
-                "k" => self.focus_dir(FocusDir::Up),
-                "j" => self.focus_dir(FocusDir::Down),
                 // Ctrl-A then a -> send a literal Ctrl-A to the shell.
                 "a" => {
                     if let Some(p) = self.panes.get_mut(&self.focused) {
@@ -242,15 +249,7 @@ impl App {
                     }
                 }
                 _ => {}
-            },
-            Key::Named(n) => match n {
-                NamedKey::ArrowLeft => self.focus_dir(FocusDir::Left),
-                NamedKey::ArrowRight => self.focus_dir(FocusDir::Right),
-                NamedKey::ArrowUp => self.focus_dir(FocusDir::Up),
-                NamedKey::ArrowDown => self.focus_dir(FocusDir::Down),
-                _ => {}
-            },
-            _ => {}
+            }
         }
     }
 
@@ -379,6 +378,17 @@ impl App {
         }
     }
 
+    /// Send an event notification to every plugin subscribed to it.
+    fn dispatch_event(&self, name: &str, params: Value) {
+        if let Some(subs) = self.registry.events.get(name) {
+            for pid in subs {
+                if let Some(p) = self.plugins.get(pid) {
+                    p.event(name, params.clone());
+                }
+            }
+        }
+    }
+
     /// Perform a `host/*` action requested by a plugin. Reuses existing actions.
     fn apply_host_action(
         &mut self,
@@ -415,6 +425,13 @@ impl App {
                     if let Some(p) = self.panes.get_mut(&self.focused) {
                         p.write_input(text.as_bytes());
                     }
+                    return true;
+                }
+                false
+            }
+            "host/notify" => {
+                if let Some(text) = params.get("text").and_then(|t| t.as_str()) {
+                    self.toast = Some((text.to_string(), Instant::now()));
                     return true;
                 }
                 false
@@ -461,6 +478,26 @@ impl App {
         if let Some(overlay) = &self.overlay {
             overlay.draw(&mut buffer, w as usize, h as usize, &mut self.font);
         }
+        // A transient toast (from host/notify) along the bottom for a few seconds.
+        if let Some((text, at)) = &self.toast {
+            if at.elapsed().as_secs() < 4 {
+                let (cw, ch) = (self.font.cell_w, self.font.cell_h);
+                let y = (h as usize).saturating_sub(ch + 6);
+                let bar = Rect::new(0, y, w as usize, ch + 6);
+                render::fill(&mut buffer, w as usize, h as usize, bar, (40, 44, 56));
+                render::draw_text(
+                    &mut buffer,
+                    w as usize,
+                    h as usize,
+                    &mut self.font,
+                    cw,
+                    y + 3,
+                    text,
+                    (235, 235, 245),
+                    None,
+                );
+            }
+        }
         buffer.present().unwrap();
     }
 
@@ -506,6 +543,16 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             UserEvent::Plugin { id, msg } => self.handle_plugin_message(event_loop, id, msg),
+            UserEvent::Block { pane, block } => {
+                let params = json!({
+                    "pane": pane,
+                    "command": block.command,
+                    "exit_code": block.exit_code,
+                    "cwd": block.cwd,
+                    "output": block.output,
+                });
+                self.dispatch_event("command_end", params);
+            }
         }
     }
 

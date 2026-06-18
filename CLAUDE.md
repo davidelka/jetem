@@ -87,17 +87,26 @@ at **M8** (first time there's >1 region) — not earlier, to avoid a one-impleme
 | `grid.rs` | The screen model: cursor, deferred-wrap, erase, scroll, **scrollback + view offset**, cursor visibility. |
 | `parser.rs` | `vte::Perform` impl: escape codes → grid ops (cursor moves, SGR colors, erase, `?25` cursor show/hide). |
 | `font.rs` | fontdue load, cell metrics (`cell_w/cell_h/baseline`), cached glyph rasterization. |
-| `render.rs` | Software painter: ANSI palette + 256/truecolor resolve, alpha `blend`, glyph drawing. **Palette/colors are hardcoded here — extract a `Theme` when themes land.** |
-| `window.rs` | winit `App`/`ApplicationHandler`: window + softbuffer surface, redraw, `encode_key`, mouse/keyboard scroll. |
+| `render.rs` | Software painter: ANSI palette + 256/truecolor resolve, alpha `blend`, glyph drawing, `draw_text`/`fill`/`draw_border` UI primitives. **Palette/colors hardcoded — extract a `Theme` when themes land.** |
+| `screen.rs` | `Screen{primary, alt}` — the two buffers; alt-screen switching. |
+| `pane.rs` | `Rect` + `TerminalPane` (pty + screen + block tracker + reader thread); the Surface seam. |
+| `layout.rs` | Binary split tree (`Layout`/`SplitDir`): `compute_rects`/`split`/`remove`. |
+| `block.rs` | OSC 133 command blocks + JSONL history (`BlockTracker`); base64 command decode. |
+| `recall.rs` | `Ctrl-A r` recall overlay (searchable history). |
+| `selection.rs` | Mouse text selection + extraction. |
+| `plugin.rs` | **Plugin host**: JSON-RPC transport, `Registry` (chord→command→plugin), `Plugin` process. |
+| `config.rs` | Reads `~/.config/terminal/plugins.toml`. |
+| `window.rs` | winit `App`: compositor over panes, input/keys, prefix dispatch, host actions, toast, redraw. |
 
-Crates: `portable-pty`, `vte`, `winit` 0.30, `softbuffer` 0.4, `fontdue`, `anyhow`.
-Currently fixed **80×24**; font path hardcoded to DejaVu Sans Mono; display target is **X11**.
+Crates: `portable-pty`, `vte`, `winit` 0.30, `softbuffer` 0.4, `fontdue`, `serde`/`serde_json`, `toml`, `arboard`, `anyhow`.
+Initial **80×24** (resizable); font path hardcoded to DejaVu Sans Mono; display target **X11** (Wayland via arboard feature).
+
+**Multiplexing is a plugin** (`examples/plugins/mux.py`) — core no longer hardcodes the split/focus/close keys. Plugins are opt-in via `plugins.toml`; the zsh integration auto-injects (no manual source).
 
 ## Milestones
 
-Done: **M1** PTY · **M2** parser+grid · **M3** render · **M4** input · **M5** scrollback/cursor/colors.
-Next: **M6** resize → **M7** alt-screen → **M8** panes/multiplexing → **M9** blocks+history (OSC 133)
-→ **M10** plugin host → then features as plugins (AI first). See `docs/roadmap.md`.
+Done: **M1–M10** — engine, resize, alt-screen, multiplexing, command blocks + recall, and the plugin host (out-of-process JSON-RPC; multiplexing dogfooded as a plugin).
+Next: the **AI assistant** plugin (explain failures / suggest commands over the `command_end` event + blocks), then rich output, themes, in-process plugin tier. See `docs/roadmap.md`.
 
 ## Working conventions
 

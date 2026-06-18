@@ -65,12 +65,14 @@ The event-bus + registries layer is runtime-independent; that's the real design 
 ### Novel core
 - [x] **M9** command blocks + persistent searchable history (OSC 133 capture)
   - M9a: block capture + JSONL persistence; M9b: Ctrl-A r recall overlay
-- [ ] **M10** plugin host — event bus + registries + MCP-style out-of-process protocol
-  - **Dogfood task:** migrate the multiplexing keybindings (`Ctrl-A` split/focus/
-    close) out of core `window.rs` into a *plugin* that calls a core pane API
-    (`split`/`focus`/`close`) + binds keys. Proves the host drives real UX and
-    that the M8 Surface seam is genuinely pluggable. Core keeps the compositor;
-    the *policy* moves to a plugin.
+- [x] **M10** plugin host — registries + MCP-style out-of-process JSON-RPC
+  - M10a: host core (spawn, initialize, command/invoke, host actions); example
+    `hello.py`. M10b: event bus (`command_end`) + `host/notify` toast; `oops.py`.
+  - **M10c dogfood (done):** multiplexing now lives in `examples/plugins/mux.py`
+    — it registers the `Ctrl-A` split/focus/close chords and calls host actions.
+    Core `window.rs` no longer hardcodes them (keeps only `r` recall + `a`
+    literal Ctrl-A). Proves the host drives real UX; the compositor stays core.
+  - Config: `~/.config/terminal/plugins.toml` lists plugins (opt-in).
 
 ### Plugins (dogfood the host)
 - [ ] AI assistant (explain failures, suggest commands, summarize) — via Claude

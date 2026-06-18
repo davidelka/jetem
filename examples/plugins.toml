@@ -1,5 +1,15 @@
-# Sample plugin config. Copy to ~/.config/terminal/plugins.toml and adjust paths.
+# Sample plugin config. Copy to ~/.config/terminal/plugins.toml and fix paths.
 # Plugins are explicit opt-in — nothing runs unless listed here.
 
+# Multiplexer: Ctrl-A split/focus/close (this is the M10 dogfood — multiplexing
+# lives in a plugin now, not core). Without it, the terminal has no splits.
 [[plugin]]
-command = "python3 /home/david/projects/terminal/examples/plugins/hello.py"
+command = "python3 /home/david/projects/terminal/examples/plugins/mux.py"
+
+# Reacts to failed commands with a toast (event-bus demo / AI-assistant seed).
+[[plugin]]
+command = "python3 /home/david/projects/terminal/examples/plugins/oops.py"
+
+# Minimal demo: Ctrl-A g -> split. (Redundant with mux; here as a tiny example.)
+# [[plugin]]
+# command = "python3 /home/david/projects/terminal/examples/plugins/hello.py"

@@ -45,8 +45,10 @@ pub struct BlockTracker {
     /// Latest cwd reported via OSC 7.
     cwd: Option<String>,
     open: Option<OpenBlock>,
-    /// Blocks finished this session (kept for the future recall UI).
+    /// Blocks finished this session (kept for the recall UI).
     history: Vec<Block>,
+    /// Blocks finished since the last `drain_completed` (for event emission).
+    completed: Vec<Block>,
     /// Path of the history file; `None` in tests. We open it per-write (rather
     /// than holding a handle) so deleting the file mid-session just recreates it.
     store: Option<PathBuf>,
@@ -66,6 +68,7 @@ impl BlockTracker {
             cwd: None,
             open: None,
             history: Vec::new(),
+            completed: Vec::new(),
             store,
         }
     }
@@ -77,12 +80,18 @@ impl BlockTracker {
             cwd: None,
             open: None,
             history: Vec::new(),
+            completed: Vec::new(),
             store: None,
         }
     }
 
     pub fn history(&self) -> &[Block] {
         &self.history
+    }
+
+    /// Take the blocks finished since the last call (for event emission).
+    pub fn drain_completed(&mut self) -> Vec<Block> {
+        std::mem::take(&mut self.completed)
     }
 
     pub fn last(&self) -> Option<&Block> {
@@ -146,6 +155,7 @@ impl BlockTracker {
                 }
             }
         }
+        self.completed.push(block.clone());
         self.history.push(block);
     }
 
@@ -235,4 +245,24 @@ fn history_path() -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))?;
     Some(base.join("terminal").join("history.jsonl"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drain_returns_each_completed_block_once() {
+        let mut t = BlockTracker::new_in_memory();
+        t.output_start_with_command("ls".into());
+        t.command_end(Some(0));
+        assert_eq!(t.drain_completed().len(), 1);
+        // Drained once: empty on the second call.
+        assert_eq!(t.drain_completed().len(), 0);
+    }
+
+    #[test]
+    fn base64_decodes_command() {
+        assert_eq!(decode_command(b"Z2l0IHB1c2g=").as_deref(), Some("git push"));
+    }
 }
