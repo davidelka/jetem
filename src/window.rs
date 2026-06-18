@@ -2,53 +2,207 @@
 //! softbuffer surface, and repaints the shared grid whenever the reader thread
 //! signals new output (via a `UserEvent::Redraw` woken through the event loop).
 
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::font::Font;
+use crate::layout::{Layout, PaneId, SplitDir};
 use crate::pane::{Rect, TerminalPane};
 use crate::render;
 
-/// Wakes the event loop from the reader thread: "the grid changed, repaint."
+/// Wakes the event loop from a pane reader thread: "output changed, repaint."
 #[derive(Debug)]
 pub enum UserEvent {
     Redraw,
 }
 
+/// Pixels of divider left between panes, and the focus-border thickness.
+const GAP: usize = 2;
+const BORDER: usize = 1;
+
+#[derive(Clone, Copy)]
+enum FocusDir {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
 pub struct App {
-    /// The (single, for 8a) terminal pane. M8b replaces this with a layout tree.
-    pane: TerminalPane,
+    panes: HashMap<PaneId, TerminalPane>,
+    layout: Layout,
+    focused: PaneId,
+    next_id: PaneId,
+    /// Cloned per new pane so its reader thread can wake the loop.
+    proxy: EventLoopProxy<UserEvent>,
+    shell: String,
     font: Font,
-    /// Latest modifier state (Ctrl/Shift/…), updated on `ModifiersChanged`.
     mods: ModifiersState,
-    /// Pixel size of the window.
+    /// True after the Ctrl-A prefix, until the next (command) key.
+    pending_prefix: bool,
     win_w: u32,
     win_h: u32,
     window: Option<Arc<Window>>,
     surface: Option<softbuffer::Surface<Arc<Window>, Arc<Window>>>,
-    // Kept alive for as long as the surface uses it.
     _context: Option<softbuffer::Context<Arc<Window>>>,
 }
 
 impl App {
-    pub fn new(pane: TerminalPane, font: Font) -> Self {
-        let rect = pane.rect();
-        Self {
-            pane,
+    pub fn new(
+        font: Font,
+        proxy: EventLoopProxy<UserEvent>,
+        shell: String,
+        initial: Rect,
+    ) -> anyhow::Result<Self> {
+        let first =
+            TerminalPane::spawn(&shell, initial, font.cell_w, font.cell_h, proxy.clone())?;
+        let id: PaneId = 0;
+        let mut panes = HashMap::new();
+        panes.insert(id, first);
+        Ok(Self {
+            panes,
+            layout: Layout::Leaf(id),
+            focused: id,
+            next_id: 1,
+            proxy,
+            shell,
             font,
             mods: ModifiersState::empty(),
-            win_w: rect.w as u32,
-            win_h: rect.h as u32,
+            pending_prefix: false,
+            win_w: initial.w as u32,
+            win_h: initial.h as u32,
             window: None,
             surface: None,
             _context: None,
+        })
+    }
+
+    /// Recompute every pane's rect from the layout and resize each (grid + PTY).
+    fn relayout(&mut self) {
+        let area = Rect::new(0, 0, self.win_w as usize, self.win_h as usize);
+        let mut rects = Vec::new();
+        self.layout.compute_rects(area, GAP, &mut rects);
+        for (id, r) in rects {
+            if let Some(p) = self.panes.get_mut(&id) {
+                p.resize_to(r, self.font.cell_w, self.font.cell_h);
+            }
+        }
+    }
+
+    /// Split the focused pane, spawning a fresh shell in the new half.
+    fn split(&mut self, dir: SplitDir) {
+        let new_id = self.next_id;
+        let tmp = Rect::new(0, 0, self.win_w as usize, self.win_h as usize);
+        let pane = match TerminalPane::spawn(
+            &self.shell,
+            tmp,
+            self.font.cell_w,
+            self.font.cell_h,
+            self.proxy.clone(),
+        ) {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        self.next_id += 1;
+        self.panes.insert(new_id, pane);
+        let layout = std::mem::replace(&mut self.layout, Layout::Leaf(new_id));
+        self.layout = layout.split(self.focused, dir, new_id);
+        self.focused = new_id;
+        self.relayout();
+    }
+
+    /// Close the focused pane (dropping it hangs up its shell). Exits the app
+    /// when the last pane closes.
+    fn close_focused(&mut self, event_loop: &ActiveEventLoop) {
+        let layout = std::mem::replace(&mut self.layout, Layout::Leaf(self.focused));
+        match layout.remove(self.focused) {
+            None => {
+                event_loop.exit();
+                return;
+            }
+            Some(l) => self.layout = l,
+        }
+        self.panes.remove(&self.focused);
+        // Focus the first remaining leaf.
+        let mut rects = Vec::new();
+        let area = Rect::new(0, 0, self.win_w as usize, self.win_h as usize);
+        self.layout.compute_rects(area, GAP, &mut rects);
+        if let Some((id, _)) = rects.first() {
+            self.focused = *id;
+        }
+        self.relayout();
+    }
+
+    /// Move focus to the nearest pane in `dir` (by rect center distance).
+    fn focus_dir(&mut self, dir: FocusDir) {
+        let cur = match self.panes.get(&self.focused) {
+            Some(p) => p.rect(),
+            None => return,
+        };
+        let (cx, cy) = (cur.x + cur.w / 2, cur.y + cur.h / 2);
+        let mut best = None;
+        let mut best_d = usize::MAX;
+        for (id, p) in &self.panes {
+            if *id == self.focused {
+                continue;
+            }
+            let r = p.rect();
+            let (px, py) = (r.x + r.w / 2, r.y + r.h / 2);
+            let ok = match dir {
+                FocusDir::Left => px < cx,
+                FocusDir::Right => px > cx,
+                FocusDir::Up => py < cy,
+                FocusDir::Down => py > cy,
+            };
+            if !ok {
+                continue;
+            }
+            let d = cx.abs_diff(px).pow(2) + cy.abs_diff(py).pow(2);
+            if d < best_d {
+                best_d = d;
+                best = Some(*id);
+            }
+        }
+        if let Some(id) = best {
+            self.focused = id;
+        }
+    }
+
+    /// Handle the key pressed right after the Ctrl-A prefix.
+    fn handle_prefix_command(&mut self, event_loop: &ActiveEventLoop, event: &KeyEvent) {
+        match &event.logical_key {
+            Key::Character(s) => match s.as_str() {
+                "|" | "v" => self.split(SplitDir::LeftRight),
+                "-" | "s" => self.split(SplitDir::TopBottom),
+                "x" => self.close_focused(event_loop),
+                "h" => self.focus_dir(FocusDir::Left),
+                "l" => self.focus_dir(FocusDir::Right),
+                "k" => self.focus_dir(FocusDir::Up),
+                "j" => self.focus_dir(FocusDir::Down),
+                // Ctrl-A then a -> send a literal Ctrl-A to the shell.
+                "a" => {
+                    if let Some(p) = self.panes.get_mut(&self.focused) {
+                        p.write_input(&[0x01]);
+                    }
+                }
+                _ => {}
+            },
+            Key::Named(n) => match n {
+                NamedKey::ArrowLeft => self.focus_dir(FocusDir::Left),
+                NamedKey::ArrowRight => self.focus_dir(FocusDir::Right),
+                NamedKey::ArrowUp => self.focus_dir(FocusDir::Up),
+                NamedKey::ArrowDown => self.focus_dir(FocusDir::Down),
+                _ => {}
+            },
+            _ => {}
         }
     }
 
@@ -63,24 +217,38 @@ impl App {
             .unwrap();
 
         let mut buffer = surface.buffer_mut().unwrap();
-        buffer.fill(0); // gap/background behind panes
-        {
-            let rect = self.pane.rect();
-            let screen = self.pane.screen().lock().unwrap();
-            render::paint(&mut buffer, w as usize, h as usize, rect, screen.active(), &mut self.font);
+        buffer.fill(render::DIVIDER); // gaps between panes show through
+        for (id, pane) in &self.panes {
+            let rect = pane.rect();
+            let focused = *id == self.focused;
+            let screen = pane.screen().lock().unwrap();
+            render::paint(
+                &mut buffer,
+                w as usize,
+                h as usize,
+                rect,
+                screen.active(),
+                &mut self.font,
+                focused,
+            );
+        }
+        if self.panes.len() > 1 {
+            if let Some(p) = self.panes.get(&self.focused) {
+                let rect = p.rect();
+                render::draw_border(&mut buffer, w as usize, h as usize, rect, render::FOCUS_BORDER, BORDER);
+            }
         }
         buffer.present().unwrap();
     }
 
-    /// Window changed pixel size: recompute the grid dimensions, resize our grid
-    /// model, and tell the shell (SIGWINCH) so full-screen apps re-lay-out.
+    /// Window resized: relayout all panes (each resizes its grid + PTY).
     fn on_resize(&mut self, px_w: u32, px_h: u32) {
         if px_w == 0 || px_h == 0 {
             return; // ignore minimize / degenerate sizes
         }
-        let rect = Rect::new(0, 0, px_w as usize, px_h as usize);
-        self.pane.resize_to(rect, self.font.cell_w, self.font.cell_h);
-
+        self.win_w = px_w;
+        self.win_h = px_h;
+        self.relayout();
         if let Some(w) = &self.window {
             w.request_redraw();
         }
@@ -126,7 +294,9 @@ impl ApplicationHandler<UserEvent> for App {
                     MouseScrollDelta::PixelDelta(p) => (p.y / self.font.cell_h as f64) as isize,
                 };
                 if lines != 0 {
-                    self.pane.screen().lock().unwrap().active_mut().scroll_view(lines);
+                    if let Some(p) = self.panes.get(&self.focused) {
+                        p.screen().lock().unwrap().active_mut().scroll_view(lines);
+                    }
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
@@ -136,14 +306,31 @@ impl ApplicationHandler<UserEvent> for App {
                 if event.state != ElementState::Pressed {
                     return;
                 }
-                // Shift+PageUp/Down scroll the viewport locally — they are a
-                // terminal feature, not bytes for the shell.
+                // The key right after Ctrl-A is a multiplexer command. Ignore
+                // bare modifier presses (e.g. the Shift needed to type `|`) so
+                // they don't consume the prefix before the real command key.
+                if self.pending_prefix {
+                    if is_modifier_key(&event) {
+                        return;
+                    }
+                    self.pending_prefix = false;
+                    self.handle_prefix_command(event_loop, &event);
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                    return;
+                }
+                if is_prefix(&event, self.mods) {
+                    self.pending_prefix = true;
+                    return; // swallow the prefix itself
+                }
+                // Shift+PageUp/Down scroll the focused pane's viewport locally.
                 if self.mods.shift_key() {
                     if let Key::Named(key @ (NamedKey::PageUp | NamedKey::PageDown)) =
                         event.logical_key
                     {
-                        {
-                            let mut s = self.pane.screen().lock().unwrap();
+                        if let Some(p) = self.panes.get(&self.focused) {
+                            let mut s = p.screen().lock().unwrap();
                             let page = s.rows() as isize - 1;
                             s.active_mut()
                                 .scroll_view(if key == NamedKey::PageUp { page } else { -page });
@@ -154,11 +341,15 @@ impl ApplicationHandler<UserEvent> for App {
                         return;
                     }
                 }
-                // Any other key snaps back to the live screen, then is sent on.
-                // The shell echoes printable chars back, so we never echo locally.
-                self.pane.screen().lock().unwrap().active_mut().reset_view();
+                // Any other key snaps the focused pane to the bottom and is sent
+                // on. The shell echoes printable chars back, so no local echo.
+                if let Some(p) = self.panes.get(&self.focused) {
+                    p.screen().lock().unwrap().active_mut().reset_view();
+                }
                 if let Some(bytes) = encode_key(&event, self.mods) {
-                    self.pane.write_input(&bytes);
+                    if let Some(p) = self.panes.get_mut(&self.focused) {
+                        p.write_input(&bytes);
+                    }
                 }
                 if let Some(w) = &self.window {
                     w.request_redraw();
@@ -200,4 +391,26 @@ fn encode_key(event: &KeyEvent, mods: ModifiersState) -> Option<Vec<u8>> {
         Key::Character(s) => Some(s.as_bytes().to_vec()),
         _ => None,
     }
+}
+
+/// Ctrl-A is the multiplexer prefix (like tmux's Ctrl-B).
+fn is_prefix(event: &KeyEvent, mods: ModifiersState) -> bool {
+    mods.control_key()
+        && matches!(&event.logical_key, Key::Character(s) if s.eq_ignore_ascii_case("a"))
+}
+
+/// A bare modifier keypress (Shift/Ctrl/Alt/…), which must not consume a pending
+/// prefix — we wait for the actual command key that the modifier produces.
+fn is_modifier_key(event: &KeyEvent) -> bool {
+    matches!(
+        &event.logical_key,
+        Key::Named(
+            NamedKey::Shift
+                | NamedKey::Control
+                | NamedKey::Alt
+                | NamedKey::Super
+                | NamedKey::Meta
+                | NamedKey::Hyper
+        )
+    )
 }

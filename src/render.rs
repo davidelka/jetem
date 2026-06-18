@@ -73,16 +73,25 @@ fn blend(fg: Rgb, dst: u32, coverage: u8) -> u32 {
 }
 
 /// Paint `grid` into the `rect` sub-region of `buf` (a `width * height`
-/// framebuffer). The caller clears any gaps between panes.
-pub fn paint(buf: &mut [u32], width: usize, height: usize, rect: Rect, grid: &Grid, font: &mut Font) {
+/// framebuffer). The caller clears any gaps between panes. `focused` gates the
+/// block cursor so only the active pane shows one.
+pub fn paint(
+    buf: &mut [u32],
+    width: usize,
+    height: usize,
+    rect: Rect,
+    grid: &Grid,
+    font: &mut Font,
+    focused: bool,
+) {
     let (cw, ch_, base) = (font.cell_w, font.cell_h, font.baseline);
 
     // Clear this pane's background.
     fill_rect(buf, width, height, rect.x, rect.y, rect.w, rect.h, pack(DEFAULT_BG));
 
-    // The block cursor is only shown on the live screen (not while scrolled
-    // into history) and only when the program hasn't hidden it.
-    let show_cursor = grid.view_offset() == 0 && grid.cursor_visible();
+    // The block cursor shows only on the focused pane's live screen (not while
+    // scrolled into history) and only when the program hasn't hidden it.
+    let show_cursor = focused && grid.view_offset() == 0 && grid.cursor_visible();
 
     for row in 0..grid.rows {
         for col in 0..grid.cols {
@@ -114,6 +123,25 @@ pub fn paint(buf: &mut [u32], width: usize, height: usize, rect: Rect, grid: &Gr
                 draw_glyph(buf, width, height, font, cell.ch, x0, y0, base, fg);
             }
         }
+    }
+}
+
+/// Gap/divider color shown between panes, and the focused-pane border accent.
+pub const DIVIDER: u32 = 0x00_1a_1a_22;
+pub const FOCUS_BORDER: u32 = 0x00_5a_9c_e6;
+
+/// Draw a `t`-pixel-thick border just inside `rect`.
+pub fn draw_border(buf: &mut [u32], width: usize, height: usize, rect: Rect, color: u32, t: usize) {
+    if rect.w == 0 || rect.h == 0 {
+        return;
+    }
+    for d in 0..t.min(rect.h) {
+        fill_rect(buf, width, height, rect.x, rect.y + d, rect.w, 1, color);
+        fill_rect(buf, width, height, rect.x, rect.y + rect.h - 1 - d, rect.w, 1, color);
+    }
+    for d in 0..t.min(rect.w) {
+        fill_rect(buf, width, height, rect.x + d, rect.y, 1, rect.h, color);
+        fill_rect(buf, width, height, rect.x + rect.w - 1 - d, rect.y, 1, rect.h, color);
     }
 }
 

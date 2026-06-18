@@ -9,6 +9,7 @@
 mod cell;
 mod font;
 mod grid;
+mod layout;
 mod pane;
 mod parser;
 mod pty;
@@ -16,7 +17,7 @@ mod render;
 mod screen;
 mod window;
 
-use pane::{Rect, TerminalPane};
+use pane::Rect;
 use winit::event_loop::EventLoop;
 use window::{App, UserEvent};
 
@@ -34,11 +35,9 @@ fn main() -> anyhow::Result<()> {
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
 
-    // One full-window terminal pane to start; M8b adds splits.
+    // Start with one full-window pane; Ctrl-A splits create more.
     let rect = Rect::new(0, 0, COLS as usize * font.cell_w, ROWS as usize * font.cell_h);
-    let pane = TerminalPane::spawn(&shell, rect, font.cell_w, font.cell_h, proxy)?;
-
-    let mut app = App::new(pane, font);
+    let mut app = App::new(font, proxy, shell, rect)?;
     event_loop.run_app(&mut app)?;
     Ok(())
 }

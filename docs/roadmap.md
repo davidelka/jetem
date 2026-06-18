@@ -58,13 +58,18 @@ The event-bus + registries layer is runtime-independent; that's the real design 
 - [x] **M3** window + software render
 - [x] **M4** keyboard input
 - [x] **M5** scrollback, cursor visibility, color polish
-- [ ] **M6** window resize (reflow + PTY `SIGWINCH`)
-- [ ] **M7** alternate screen (`?1049h/l`) so vim/tmux/less work
-- [ ] **M8** panes / layout (multiplexing) — enables panels-as-programs
+- [x] **M6** window resize (reflow + PTY `SIGWINCH`)
+- [x] **M7** alternate screen (`?1049h/l`) so vim/tmux/less work
+- [x] **M8** panes / layout (multiplexing) — Surface/compositor seam + Ctrl-A keys
 
 ### Novel core
 - [ ] **M9** command blocks + persistent searchable history (OSC 133 capture)
 - [ ] **M10** plugin host — event bus + registries + MCP-style out-of-process protocol
+  - **Dogfood task:** migrate the multiplexing keybindings (`Ctrl-A` split/focus/
+    close) out of core `window.rs` into a *plugin* that calls a core pane API
+    (`split`/`focus`/`close`) + binds keys. Proves the host drives real UX and
+    that the M8 Surface seam is genuinely pluggable. Core keeps the compositor;
+    the *policy* moves to a plugin.
 
 ### Plugins (dogfood the host)
 - [ ] AI assistant (explain failures, suggest commands, summarize) — via Claude
