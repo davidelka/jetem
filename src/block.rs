@@ -9,8 +9,9 @@
 //!
 //! Finished blocks are appended to a JSONL history file for later search.
 
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -46,19 +47,20 @@ pub struct BlockTracker {
     open: Option<OpenBlock>,
     /// Blocks finished this session (kept for the future recall UI).
     history: Vec<Block>,
-    /// Append-only persistence; `None` in tests / if the file can't be opened.
-    store: Option<File>,
+    /// Path of the history file; `None` in tests. We open it per-write (rather
+    /// than holding a handle) so deleting the file mid-session just recreates it.
+    store: Option<PathBuf>,
 }
 
 impl BlockTracker {
-    /// Open (or create) the shared history file under the XDG data dir.
+    /// Prepare the shared history file path under the XDG data dir.
     pub fn new() -> Self {
-        let store = history_path().and_then(|path| {
+        let store = history_path();
+        if let Some(path) = &store {
             if let Some(dir) = path.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
-            OpenOptions::new().create(true).append(true).open(path).ok()
-        });
+        }
         Self {
             command_mark: None,
             cwd: None,
@@ -136,9 +138,12 @@ impl BlockTracker {
             cwd: open.cwd,
             started_at_ms: open.started_at_ms,
         };
-        if let Some(file) = &mut self.store {
+        if let Some(path) = &self.store {
             if let Ok(line) = serde_json::to_string(&block) {
-                let _ = writeln!(file, "{line}");
+                // Open per-write so the file is recreated if it was deleted.
+                if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
+                    let _ = writeln!(f, "{line}");
+                }
             }
         }
         self.history.push(block);

@@ -200,7 +200,14 @@ impl App {
                 "|" | "v" => self.split(SplitDir::LeftRight),
                 "-" | "s" => self.split(SplitDir::TopBottom),
                 "x" => self.close_focused(event_loop),
-                "r" => self.overlay = Some(Recall::open()), // recall past commands
+                "r" => {
+                    // Include this session's in-memory blocks from every pane.
+                    let mut session = Vec::new();
+                    for p in self.panes.values() {
+                        session.extend(p.blocks().lock().unwrap().history().iter().cloned());
+                    }
+                    self.overlay = Some(Recall::open(session));
+                }
                 "h" => self.focus_dir(FocusDir::Left),
                 "l" => self.focus_dir(FocusDir::Right),
                 "k" => self.focus_dir(FocusDir::Up),

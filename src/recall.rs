@@ -30,8 +30,11 @@ pub struct Recall {
 }
 
 impl Recall {
-    pub fn open() -> Self {
+    /// Open over on-disk history plus this session's in-memory blocks (so it
+    /// works even if the file was just deleted or hasn't been flushed).
+    pub fn open(session: Vec<Block>) -> Self {
         let mut blocks = load_history();
+        blocks.extend(session); // session blocks are the most recent
         blocks.reverse(); // most recent first
         let mut seen = std::collections::HashSet::new();
         let mut all = Vec::new();
