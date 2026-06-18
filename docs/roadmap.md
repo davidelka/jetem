@@ -63,7 +63,8 @@ The event-bus + registries layer is runtime-independent; that's the real design 
 - [x] **M8** panes / layout (multiplexing) — Surface/compositor seam + Ctrl-A keys
 
 ### Novel core
-- [ ] **M9** command blocks + persistent searchable history (OSC 133 capture)
+- [x] **M9** command blocks + persistent searchable history (OSC 133 capture)
+  - M9a: block capture + JSONL persistence; M9b: Ctrl-A r recall overlay
 - [ ] **M10** plugin host — event bus + registries + MCP-style out-of-process protocol
   - **Dogfood task:** migrate the multiplexing keybindings (`Ctrl-A` split/focus/
     close) out of core `window.rs` into a *plugin* that calls a core pane API
