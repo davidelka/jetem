@@ -32,10 +32,10 @@ __term_preexec() {
   __term_osc "133;C"
 }
 
-# Mark command start (end of prompt) by wrapping it into PS1.
+# Mark command start at the END of the prompt (where you start typing), so the
+# command capture excludes the prompt itself. %{...%} = zero-width to zsh.
 __term_install_prompt() {
-  # %{...%} tells zsh these bytes are zero-width.
-  PS1="%{$(__term_osc '133;B')%}$PS1"
+  PS1="$PS1%{$(__term_osc '133;B')%}"
 }
 
 autoload -Uz add-zsh-hook 2>/dev/null

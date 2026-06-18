@@ -304,6 +304,15 @@ mod tests {
     }
 
     #[test]
+    fn osc133_command_excludes_prompt() {
+        // A prompt is printed before the B mark; only the typed command
+        // (between B and C) must be captured, not the prompt text.
+        let bytes = b"\x1b]133;A\x07PROMPT$ \x1b]133;B\x07ls -l\x1b]133;C\x07out\x1b]133;D;0\x07";
+        let blocks = run_blocks(bytes, 4, 40);
+        assert_eq!(blocks.last().unwrap().command, "ls -l");
+    }
+
+    #[test]
     fn osc133_captures_nonzero_exit() {
         let bytes = b"\x1b]133;B\x07false\x1b]133;C\x07\x1b]133;D;1\x07";
         let blocks = run_blocks(bytes, 4, 20);
