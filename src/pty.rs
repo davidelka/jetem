@@ -3,8 +3,12 @@
 //! to the shell as if it were a real terminal.
 
 use std::io::{Read, Write};
+use std::path::PathBuf;
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+
+/// Our shell integration, embedded so it ships inside the binary.
+const INTEGRATION: &str = include_str!("../shell-integration.zsh");
 
 /// Owns the master end of a PTY and the spawned shell child.
 pub struct Pty {
@@ -26,6 +30,11 @@ impl Pty {
         // Launch the shell with stdio wired to the slave end.
         let mut cmd = CommandBuilder::new(shell);
         cmd.env("TERM", "xterm-256color");
+        // Auto-inject our shell integration (OSC 133) for zsh via ZDOTDIR.
+        if let Some((zdotdir, user_zdotdir)) = zsh_integration(shell) {
+            cmd.env("ZDOTDIR", zdotdir);
+            cmd.env("USER_ZDOTDIR", user_zdotdir);
+        }
         let child = pair.slave.spawn_command(cmd)?;
 
         // Drop the slave handle: once the child exits, the master read side will
@@ -64,4 +73,50 @@ impl Pty {
     pub fn try_wait(&mut self) -> anyhow::Result<Option<portable_pty::ExitStatus>> {
         Ok(self.child.try_wait()?)
     }
+}
+
+/// If `shell` is zsh, build a temp `ZDOTDIR` whose rc files source the user's
+/// real config and then our integration, and return `(ZDOTDIR, USER_ZDOTDIR)`
+/// to set in the child env. The temp `.zshrc` restores `ZDOTDIR` afterward so
+/// the user's session behaves normally. Returns `None` for non-zsh shells or on
+/// any filesystem error (the user can still `source` the snippet manually).
+fn zsh_integration(shell: &str) -> Option<(PathBuf, String)> {
+    let is_zsh = std::path::Path::new(shell)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n == "zsh");
+    if !is_zsh {
+        return None;
+    }
+
+    let user_zdotdir =
+        std::env::var("ZDOTDIR").unwrap_or_else(|_| std::env::var("HOME").unwrap_or_default());
+
+    let dir = std::env::temp_dir().join(format!("terminal-zdotdir-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).ok()?;
+
+    let integration = dir.join("integration.zsh");
+    std::fs::write(&integration, INTEGRATION).ok()?;
+
+    // Forward the user's real rc files (looked up via $USER_ZDOTDIR), then our
+    // integration, then restore ZDOTDIR for the rest of the session.
+    let fwd = |name: &str| format!("[[ -f \"$USER_ZDOTDIR/{name}\" ]] && source \"$USER_ZDOTDIR/{name}\"\n");
+    std::fs::write(dir.join(".zshenv"), fwd(".zshenv")).ok()?;
+    std::fs::write(dir.join(".zprofile"), fwd(".zprofile")).ok()?;
+    std::fs::write(
+        dir.join(".zlogin"),
+        format!("{}ZDOTDIR=\"$USER_ZDOTDIR\"\n", fwd(".zlogin")),
+    )
+    .ok()?;
+    std::fs::write(
+        dir.join(".zshrc"),
+        format!(
+            "{}source \"{}\"\nZDOTDIR=\"$USER_ZDOTDIR\"\n",
+            fwd(".zshrc"),
+            integration.display()
+        ),
+    )
+    .ok()?;
+
+    Some((dir, user_zdotdir))
 }

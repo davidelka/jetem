@@ -11,6 +11,10 @@
 #   OSC 133;D;<code>   command end, with the exit status
 #   OSC 7;file://host/cwd   current working directory
 
+# Load once (auto-injection + a manual `source` must not double-install).
+[[ -n $__TERM_INTEGRATION_LOADED ]] && return
+__TERM_INTEGRATION_LOADED=1
+
 # Emit a raw escape (BEL-terminated OSC).
 __term_osc() { printf '\033]%s\007' "$1"; }
 
