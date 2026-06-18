@@ -16,6 +16,7 @@ use winit::window::{Window, WindowId};
 use crate::font::Font;
 use crate::layout::{Layout, PaneId, SplitDir};
 use crate::pane::{Rect, TerminalPane};
+use crate::recall::Recall;
 use crate::render;
 
 /// Wakes the event loop from a pane reader thread: "output changed, repaint."
@@ -48,6 +49,8 @@ pub struct App {
     mods: ModifiersState,
     /// True after the Ctrl-A prefix, until the next (command) key.
     pending_prefix: bool,
+    /// The command-recall overlay, when open (captures input + drawn on top).
+    overlay: Option<Recall>,
     win_w: u32,
     win_h: u32,
     window: Option<Arc<Window>>,
@@ -77,6 +80,7 @@ impl App {
             font,
             mods: ModifiersState::empty(),
             pending_prefix: false,
+            overlay: None,
             win_w: initial.w as u32,
             win_h: initial.h as u32,
             window: None,
@@ -183,6 +187,7 @@ impl App {
                 "|" | "v" => self.split(SplitDir::LeftRight),
                 "-" | "s" => self.split(SplitDir::TopBottom),
                 "x" => self.close_focused(event_loop),
+                "r" => self.overlay = Some(Recall::open()), // recall past commands
                 "h" => self.focus_dir(FocusDir::Left),
                 "l" => self.focus_dir(FocusDir::Right),
                 "k" => self.focus_dir(FocusDir::Up),
@@ -203,6 +208,39 @@ impl App {
                 _ => {}
             },
             _ => {}
+        }
+    }
+
+    /// Route a key to the open recall overlay. Enter inserts the selected
+    /// command into the focused pane (without running it); Esc closes.
+    fn handle_overlay_key(&mut self, event: &KeyEvent) {
+        let mut close = false;
+        let mut insert = None;
+        if let Some(o) = &mut self.overlay {
+            match &event.logical_key {
+                Key::Named(NamedKey::Escape) => close = true,
+                Key::Named(NamedKey::Enter) => {
+                    insert = o.selected_command();
+                    close = true;
+                }
+                Key::Named(NamedKey::Backspace) => o.on_backspace(),
+                Key::Named(NamedKey::ArrowUp) => o.move_sel(-1),
+                Key::Named(NamedKey::ArrowDown) => o.move_sel(1),
+                Key::Character(s) => {
+                    for c in s.chars() {
+                        o.on_char(c);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(cmd) = insert {
+            if let Some(p) = self.panes.get_mut(&self.focused) {
+                p.write_input(cmd.as_bytes());
+            }
+        }
+        if close {
+            self.overlay = None;
         }
     }
 
@@ -237,6 +275,10 @@ impl App {
                 let rect = p.rect();
                 render::draw_border(&mut buffer, w as usize, h as usize, rect, render::FOCUS_BORDER, BORDER);
             }
+        }
+        // The recall overlay draws on top of everything.
+        if let Some(overlay) = &self.overlay {
+            overlay.draw(&mut buffer, w as usize, h as usize, &mut self.font);
         }
         buffer.present().unwrap();
     }
@@ -304,6 +346,14 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state != ElementState::Pressed {
+                    return;
+                }
+                // The recall overlay captures all input while it's open.
+                if self.overlay.is_some() {
+                    self.handle_overlay_key(&event);
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
                     return;
                 }
                 // The key right after Ctrl-A is a multiplexer command. Ignore

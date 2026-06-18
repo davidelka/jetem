@@ -156,6 +156,21 @@ impl BlockTracker {
     }
 }
 
+/// Load every block from the on-disk history file (oldest first). Malformed
+/// lines are skipped. Returns an empty vec if there's no history yet.
+pub fn load_history() -> Vec<Block> {
+    let Some(path) = history_path() else {
+        return Vec::new();
+    };
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    contents
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Block>(line).ok())
+        .collect()
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

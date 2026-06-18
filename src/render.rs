@@ -130,6 +130,40 @@ pub fn paint(
 pub const DIVIDER: u32 = 0x00_1a_1a_22;
 pub const FOCUS_BORDER: u32 = 0x00_5a_9c_e6;
 
+/// Draw a string at pixel (x, y) on `fg` over an optional `bg` fill. Returns the
+/// x just past the text. The reusable primitive for custom-drawn UI (overlays,
+/// and later plugin widgets).
+#[allow(clippy::too_many_arguments)]
+pub fn draw_text(
+    buf: &mut [u32],
+    width: usize,
+    height: usize,
+    font: &mut Font,
+    x: usize,
+    y: usize,
+    text: &str,
+    fg: (u8, u8, u8),
+    bg: Option<(u8, u8, u8)>,
+) -> usize {
+    let (cw, ch_, base) = (font.cell_w, font.cell_h, font.baseline);
+    let mut cx = x;
+    for ch in text.chars() {
+        if let Some(bg) = bg {
+            fill_rect(buf, width, height, cx, y, cw, ch_, pack(bg));
+        }
+        if ch != ' ' {
+            draw_glyph(buf, width, height, font, ch, cx, y, base, fg);
+        }
+        cx += cw;
+    }
+    cx
+}
+
+/// Fill `rect` with a solid color (used for overlay panels).
+pub fn fill(buf: &mut [u32], width: usize, height: usize, rect: Rect, color: (u8, u8, u8)) {
+    fill_rect(buf, width, height, rect.x, rect.y, rect.w, rect.h, pack(color));
+}
+
 /// Draw a `t`-pixel-thick border just inside `rect`.
 pub fn draw_border(buf: &mut [u32], width: usize, height: usize, rect: Rect, color: u32, t: usize) {
     if rect.w == 0 || rect.h == 0 {

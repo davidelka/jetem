@@ -14,6 +14,7 @@ mod layout;
 mod pane;
 mod parser;
 mod pty;
+mod recall;
 mod render;
 mod screen;
 mod window;
