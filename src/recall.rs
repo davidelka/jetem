@@ -97,6 +97,13 @@ impl Recall {
             .map(|&i| self.all[i].command.clone())
     }
 
+    /// The output captured for the selected block (for "copy block output").
+    pub fn selected_output(&self) -> Option<String> {
+        self.results
+            .get(self.selected)
+            .map(|&i| self.all[i].output.clone())
+    }
+
     /// Draw the overlay centered near the top of the window.
     pub fn draw(&self, buf: &mut [u32], w: usize, h: usize, font: &mut Font) {
         let (cw, ch) = (font.cell_w, font.cell_h);

@@ -289,7 +289,17 @@ impl App {
         None
     }
 
-    /// Copy the current selection to the system clipboard.
+    /// Put text on the system clipboard (no-op if empty or unavailable).
+    fn set_clipboard(&mut self, text: String) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(cb) = &mut self.clipboard {
+            let _ = cb.set_text(text);
+        }
+    }
+
+    /// Copy the current mouse selection to the system clipboard.
     fn copy_selection(&mut self) {
         let text = match &self.selection {
             Some(sel) => match self.panes.get(&sel.pane) {
@@ -301,12 +311,7 @@ impl App {
             },
             None => return,
         };
-        if text.is_empty() {
-            return;
-        }
-        if let Some(cb) = &mut self.clipboard {
-            let _ = cb.set_text(text);
-        }
+        self.set_clipboard(text);
     }
 
     /// Paste the clipboard into the focused pane.
@@ -466,7 +471,15 @@ impl ApplicationHandler<UserEvent> for App {
                 if self.mods.control_key() && self.mods.shift_key() {
                     match event.physical_key {
                         PhysicalKey::Code(KeyCode::KeyC) => {
-                            self.copy_selection();
+                            // In the overlay, copy the highlighted block's output;
+                            // otherwise copy the mouse selection.
+                            if let Some(o) = &self.overlay {
+                                if let Some(text) = o.selected_output() {
+                                    self.set_clipboard(text);
+                                }
+                            } else {
+                                self.copy_selection();
+                            }
                             return;
                         }
                         PhysicalKey::Code(KeyCode::KeyV) => {
