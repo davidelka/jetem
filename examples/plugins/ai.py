@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-"""AI assistant plugin — explains the last command using Claude.
+"""AI assistant plugin — explains the last command and chats about it.
 
-Press Ctrl-A i to ask Claude to explain the most recent command (why it failed,
-the likely fix). Subscribes to `command_end` to remember the last command, and
-shows the answer via `host/notify`.
+Press Ctrl-A i to ask Claude about the most recent command. The answer opens in
+a panel; type a follow-up there and press Enter to continue the conversation.
 
 Two backends (set TERMINAL_AI_BACKEND=cli|api to force one):
-  - "cli": shells out to the `claude` CLI in print mode — uses your Claude
-    subscription (Pro/Max), no API key needed.
+  - "cli": shells out to the `claude` CLI — uses your Claude subscription, no key.
   - "api": the `anthropic` SDK (`pip install anthropic` + ANTHROPIC_API_KEY).
-Default: API if ANTHROPIC_API_KEY is set, else the `claude` CLI if present.
+Default: api if ANTHROPIC_API_KEY is set, else the `claude` CLI if present.
 
 Enable via ~/.config/terminal/plugins.toml:
     [[plugin]]
@@ -25,12 +23,16 @@ import threading
 MODEL = "claude-opus-4-8"
 SYSTEM = (
     "You are a terse shell assistant. Given a command, its output, and exit "
-    "code, explain in 2-4 short lines why it failed and the most likely fix. "
-    "Answer directly, no preamble."
+    "code, explain why it failed and the fix in a few short lines. Answer "
+    "follow-up questions directly, no preamble."
 )
 
 _out_lock = threading.Lock()
-_last = None  # last command: {"command", "output", "exit_code", "cwd"}
+_state_lock = threading.Lock()
+_last = None       # last command_end params
+_convo = []        # [{"role", "content"}] sent to Claude
+_transcript = []   # display lines for the panel
+_busy = False
 
 
 def send(obj):
@@ -43,10 +45,15 @@ def notify(text):
     send({"jsonrpc": "2.0", "id": 1, "method": "host/notify", "params": {"text": text}})
 
 
-def show_panel(title, body):
+def show_panel(thinking=False):
+    body = "\n\n".join(_transcript)
+    if thinking:
+        body += "\n\n🤖 …"
     send({"jsonrpc": "2.0", "id": 1, "method": "host/showPanel",
-          "params": {"title": title, "body": body}})
+          "params": {"title": "🤖 AI  (type a follow-up, Enter to send)", "body": body, "input": True}})
 
+
+# --- backends ---------------------------------------------------------------
 
 def choose_backend():
     forced = os.environ.get("TERMINAL_AI_BACKEND")
@@ -55,59 +62,83 @@ def choose_backend():
     if os.environ.get("ANTHROPIC_API_KEY"):
         return "api"
     if shutil.which("claude"):
-        return "cli"  # use the Claude subscription via the CLI
-    return "api"  # will surface a helpful error
+        return "cli"
+    return "api"
 
 
-def call_api(user):
-    import anthropic  # raises ImportError if the SDK isn't installed
+def query(messages):
+    """Ask Claude given the full message history."""
+    if choose_backend() == "cli":
+        claude = shutil.which("claude")
+        if not claude:
+            raise RuntimeError("`claude` CLI not found")
+        prompt = ""
+        for m in messages:
+            who = "User" if m["role"] == "user" else "Assistant"
+            prompt += f"{who}: {m['content']}\n\n"
+        prompt += "Assistant:"
+        proc = subprocess.run(
+            [claude, "-p", prompt, "--append-system-prompt", SYSTEM],
+            capture_output=True, text=True, timeout=120,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError((proc.stderr or "claude CLI failed").strip()[:160])
+        return proc.stdout.strip()
 
+    import anthropic  # ImportError handled by caller
     client = anthropic.Anthropic()
-    resp = client.messages.create(
-        model=MODEL,
-        max_tokens=512,
-        system=SYSTEM,
-        messages=[{"role": "user", "content": user}],
-    )
+    resp = client.messages.create(model=MODEL, max_tokens=1024, system=SYSTEM, messages=messages)
     return "".join(b.text for b in resp.content if b.type == "text").strip()
 
 
-def call_cli(user):
-    """One-shot via the `claude` CLI (uses the logged-in subscription)."""
-    claude = shutil.which("claude")
-    if not claude:
-        raise RuntimeError("`claude` CLI not found")
-    proc = subprocess.run(
-        [claude, "-p", user, "--append-system-prompt", SYSTEM],
-        capture_output=True, text=True, timeout=120,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError((proc.stderr or "claude CLI failed").strip()[:160])
-    return proc.stdout.strip()
+def run_turn():
+    """Query Claude with the current convo and append the answer."""
+    global _busy
+    try:
+        answer = query(_convo)
+    except ImportError:
+        answer = "(error: `pip install anthropic`, or set TERMINAL_AI_BACKEND=cli)"
+    except Exception as e:
+        answer = f"(error: {str(e).splitlines()[0][:160]})"
+    with _state_lock:
+        _convo.append({"role": "assistant", "content": answer})
+        _transcript.append("🤖 " + answer)
+        _busy = False
+    show_panel()
 
 
-def explain_async(ctx):
-    """Call Claude in a background thread and notify with the answer."""
+def start_explain(ctx):
+    global _busy
     cmd = ctx.get("command", "?")
     code = ctx.get("exit_code")
     cwd = ctx.get("cwd") or "?"
     output = (ctx.get("output") or "")[-4000:]
     user = f"$ {cmd}\n(exit {code}, cwd {cwd})\n\n{output}"
+    with _state_lock:
+        _convo[:] = [{"role": "user", "content": user}]
+        _transcript[:] = [f"▸ explain: {cmd}  (exit {code})"]
+        _busy = True
+    show_panel(thinking=True)
+    threading.Thread(target=run_turn, daemon=True).start()
 
-    backend = choose_backend()
-    try:
-        answer = call_cli(user) if backend == "cli" else call_api(user)
-        show_panel("🤖 AI", answer or "(no answer)")
-    except ImportError:
-        notify("AI error: `pip install anthropic` (or set TERMINAL_AI_BACKEND=cli)")
-    except Exception as e:  # missing key/CLI, network, API error, ...
-        notify(f"AI error: {e}".splitlines()[0][:160])
 
+def start_followup(text):
+    global _busy
+    with _state_lock:
+        if _busy:
+            return
+        _convo.append({"role": "user", "content": text})
+        _transcript.append("you: " + text)
+        _busy = True
+    show_panel(thinking=True)
+    threading.Thread(target=run_turn, daemon=True).start()
+
+
+# --- protocol ---------------------------------------------------------------
 
 def handle(msg):
     global _last
     method = msg.get("method")
-
     if method == "initialize":
         send({
             "jsonrpc": "2.0",
@@ -121,13 +152,16 @@ def handle(msg):
         })
     elif method == "event/command_end":
         _last = msg.get("params", {})
+    elif method == "event/panelInput":
+        text = msg.get("params", {}).get("text", "").strip()
+        if text:
+            start_followup(text)
     elif method == "command/invoke":
         if msg.get("params", {}).get("command") == "ai.explain":
             if not _last:
                 notify("nothing to explain yet")
             else:
-                notify("🤖 thinking…")
-                threading.Thread(target=explain_async, args=(_last,), daemon=True).start()
+                start_explain(_last)
 
 
 def main():

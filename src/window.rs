@@ -368,7 +368,7 @@ impl App {
                 method,
                 params,
             } => {
-                let ok = self.apply_host_action(event_loop, &method, &params);
+                let ok = self.apply_host_action(event_loop, id, &method, &params);
                 if let Some(p) = self.plugins.get(&id) {
                     p.reply(req_id, ok);
                 }
@@ -397,6 +397,7 @@ impl App {
     fn apply_host_action(
         &mut self,
         event_loop: &ActiveEventLoop,
+        plugin_id: PluginId,
         method: &str,
         params: &serde_json::Value,
     ) -> bool {
@@ -447,8 +448,9 @@ impl App {
                     .unwrap_or("")
                     .to_string();
                 let body = params.get("body").and_then(|b| b.as_str()).unwrap_or("");
+                let interactive = params.get("input").and_then(|i| i.as_bool()).unwrap_or(false);
                 let cols = self.win_w as usize / self.font.cell_w.max(1);
-                self.panel = Some(TextPanel::new(title, body, cols));
+                self.panel = Some(TextPanel::new(title, body, cols, interactive, plugin_id));
                 true
             }
             _ => false, // unknown action
@@ -590,27 +592,48 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_px = (position.x, position.y);
-                if self.selecting {
-                    if let (Some((pane, row, col)), Some(sel)) =
-                        (self.cell_at(position.x, position.y), self.selection.as_mut())
-                    {
-                        if pane == sel.pane {
-                            sel.set_head((row, col));
-                            if let Some(w) = &self.window {
-                                w.request_redraw();
-                            }
+                if !self.selecting {
+                    return;
+                }
+                // While a panel is open, the drag selects panel text.
+                if self.panel.is_some() {
+                    let (wp, hp, px, py) = (self.win_w as usize, self.win_h as usize, position.x, position.y);
+                    let cell = self.panel.as_ref().and_then(|p| p.cell_at(px, py, wp, hp, &self.font));
+                    if let (Some(pos), Some(p)) = (cell, self.panel.as_mut()) {
+                        p.extend_select(pos);
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
+                    }
+                    return;
+                }
+                if let (Some((pane, row, col)), Some(sel)) =
+                    (self.cell_at(position.x, position.y), self.selection.as_mut())
+                {
+                    if pane == sel.pane {
+                        sel.set_head((row, col));
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
                         }
                     }
                 }
             }
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
+                let (px, py) = self.cursor_px;
                 match state {
                     ElementState::Pressed => {
-                        let (px, py) = self.cursor_px;
-                        self.selection = self.cell_at(px, py).map(|(pane, row, col)| {
-                            Selection::new(pane, (row, col))
-                        });
                         self.selecting = true;
+                        if self.panel.is_some() {
+                            let (wp, hp) = (self.win_w as usize, self.win_h as usize);
+                            let cell = self.panel.as_ref().and_then(|p| p.cell_at(px, py, wp, hp, &self.font));
+                            if let (Some(pos), Some(p)) = (cell, self.panel.as_mut()) {
+                                p.begin_select(pos);
+                            }
+                        } else {
+                            self.selection = self
+                                .cell_at(px, py)
+                                .map(|(pane, row, col)| Selection::new(pane, (row, col)));
+                        }
                     }
                     ElementState::Released => self.selecting = false,
                 }
@@ -643,9 +666,12 @@ impl ApplicationHandler<UserEvent> for App {
                 if self.mods.control_key() && self.mods.shift_key() {
                     match event.physical_key {
                         PhysicalKey::Code(KeyCode::KeyC) => {
-                            // In the overlay, copy the highlighted block's output;
-                            // otherwise copy the mouse selection.
-                            if let Some(o) = &self.overlay {
+                            // Copy from whatever's focused: panel selection, then
+                            // overlay block output, else the mouse selection.
+                            if let Some(p) = &self.panel {
+                                let text = p.copy_text();
+                                self.set_clipboard(text);
+                            } else if let Some(o) = &self.overlay {
                                 if let Some(text) = o.selected_output() {
                                     self.set_clipboard(text);
                                 }
@@ -662,21 +688,48 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
                 // A modal panel captures all input while it's open.
-                if let Some(panel) = &mut self.panel {
-                    match &event.logical_key {
-                        Key::Named(NamedKey::Escape) => self.panel = None,
-                        Key::Character(s) if s == "q" => self.panel = None,
-                        Key::Named(NamedKey::ArrowUp) => panel.scroll(-1),
-                        Key::Named(NamedKey::ArrowDown) => panel.scroll(1),
-                        Key::Named(NamedKey::PageUp) => {
-                            let d = panel.page();
-                            panel.scroll(-d);
+                if self.panel.is_some() {
+                    let mut close = false;
+                    let mut submit: Option<(usize, String)> = None;
+                    if let Some(panel) = &mut self.panel {
+                        match &event.logical_key {
+                            Key::Named(NamedKey::Escape) => close = true,
+                            Key::Named(NamedKey::Enter) if panel.interactive => {
+                                if let Some(text) = panel.take_input() {
+                                    submit = Some((panel.owner, text));
+                                }
+                            }
+                            Key::Named(NamedKey::Backspace) if panel.interactive => panel.on_backspace(),
+                            Key::Named(NamedKey::ArrowUp) => panel.scroll(-1),
+                            Key::Named(NamedKey::ArrowDown) => panel.scroll(1),
+                            Key::Named(NamedKey::PageUp) => {
+                                let d = panel.page();
+                                panel.scroll(-d);
+                            }
+                            Key::Named(NamedKey::PageDown) => {
+                                let d = panel.page();
+                                panel.scroll(d);
+                            }
+                            Key::Character(s) => {
+                                if panel.interactive {
+                                    for c in s.chars() {
+                                        panel.on_char(c);
+                                    }
+                                } else if s == "q" {
+                                    close = true;
+                                }
+                            }
+                            _ => {}
                         }
-                        Key::Named(NamedKey::PageDown) => {
-                            let d = panel.page();
-                            panel.scroll(d);
+                    }
+                    // Send a submitted follow-up to the owning plugin.
+                    if let Some((owner, text)) = submit {
+                        if let Some(p) = self.plugins.get(&owner) {
+                            p.event("panelInput", json!({ "text": text }));
                         }
-                        _ => {}
+                    }
+                    if close {
+                        self.panel = None;
                     }
                     if let Some(w) = &self.window {
                         w.request_redraw();
