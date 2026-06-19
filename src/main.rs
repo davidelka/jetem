@@ -35,6 +35,20 @@ const FONT_PATH: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";
 const FONT_PX: f32 = 16.0;
 
 fn main() -> anyhow::Result<()> {
+    // Log panics (incl. from the main event loop) to a file for debugging.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/terminal-panic.log")
+        {
+            let _ = writeln!(f, "{info}");
+        }
+        default_hook(info);
+    }));
+
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let font = font::Font::load(FONT_PATH, FONT_PX)?;
 
