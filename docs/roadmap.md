@@ -75,7 +75,9 @@ The event-bus + registries layer is runtime-independent; that's the real design 
   - Config: `~/.config/terminal/plugins.toml` lists plugins (opt-in).
 
 ### Plugins (dogfood the host)
-- [ ] AI assistant (explain failures, suggest commands, summarize) — via Claude
+- [x] AI assistant (`examples/plugins/ai.py`) — `Ctrl-A i` explains the last command via
+  Claude (`claude-opus-4-8`), shown as a multi-line toast. Subscribes to `command_end`,
+  invokes asynchronously. Needs `pip install anthropic` + `ANTHROPIC_API_KEY`.
 - [ ] Rich / structured output renderers (tables, images, foldable)
 - [ ] Custom-draw panels / widgets (needs in-process tier)
 - [ ] Themes & custom symbols

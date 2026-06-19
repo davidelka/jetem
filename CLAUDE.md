@@ -105,8 +105,8 @@ Initial **80×24** (resizable); font path hardcoded to DejaVu Sans Mono; display
 
 ## Milestones
 
-Done: **M1–M10** — engine, resize, alt-screen, multiplexing, command blocks + recall, and the plugin host (out-of-process JSON-RPC; multiplexing dogfooded as a plugin).
-Next: the **AI assistant** plugin (explain failures / suggest commands over the `command_end` event + blocks), then rich output, themes, in-process plugin tier. See `docs/roadmap.md`.
+Done: **M1–M10** — engine, resize, alt-screen, multiplexing, command blocks + recall, and the plugin host (out-of-process JSON-RPC; multiplexing dogfooded as a plugin). **AI assistant** plugin (`examples/plugins/ai.py`): `Ctrl-A i` explains the last command via Claude (`claude-opus-4-8`) — needs `pip install anthropic` + `ANTHROPIC_API_KEY`. When touching Claude/API code, follow the `claude-api` skill.
+Next: rich/structured output renderers, themes (`Theme` extraction), in-process plugin tier (WASM/Rhai), a multi-line panel host action for long AI answers. See `docs/roadmap.md`.
 
 ## Working conventions
 

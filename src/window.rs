@@ -478,24 +478,31 @@ impl App {
         if let Some(overlay) = &self.overlay {
             overlay.draw(&mut buffer, w as usize, h as usize, &mut self.font);
         }
-        // A transient toast (from host/notify) along the bottom for a few seconds.
+        // A transient toast (from host/notify) along the bottom for a few
+        // seconds. Multi-line answers (e.g. from the AI plugin) render as a
+        // stack of lines sized to fit.
         if let Some((text, at)) = &self.toast {
-            if at.elapsed().as_secs() < 4 {
+            if at.elapsed().as_secs() < 10 {
                 let (cw, ch) = (self.font.cell_w, self.font.cell_h);
-                let y = (h as usize).saturating_sub(ch + 6);
-                let bar = Rect::new(0, y, w as usize, ch + 6);
+                let lines: Vec<&str> = text.lines().collect();
+                let n = lines.len().max(1);
+                let bar_h = n * ch + 8;
+                let y0 = (h as usize).saturating_sub(bar_h);
+                let bar = Rect::new(0, y0, w as usize, bar_h);
                 render::fill(&mut buffer, w as usize, h as usize, bar, (40, 44, 56));
-                render::draw_text(
-                    &mut buffer,
-                    w as usize,
-                    h as usize,
-                    &mut self.font,
-                    cw,
-                    y + 3,
-                    text,
-                    (235, 235, 245),
-                    None,
-                );
+                for (i, line) in lines.iter().enumerate() {
+                    render::draw_text(
+                        &mut buffer,
+                        w as usize,
+                        h as usize,
+                        &mut self.font,
+                        cw,
+                        y0 + 4 + i * ch,
+                        line,
+                        (235, 235, 245),
+                        None,
+                    );
+                }
             }
         }
         buffer.present().unwrap();
