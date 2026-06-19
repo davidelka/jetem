@@ -700,6 +700,7 @@ impl ApplicationHandler<UserEvent> for App {
                                 }
                             }
                             Key::Named(NamedKey::Backspace) if panel.interactive => panel.on_backspace(),
+                            Key::Named(NamedKey::Space) if panel.interactive => panel.on_char(' '),
                             Key::Named(NamedKey::ArrowUp) => panel.scroll(-1),
                             Key::Named(NamedKey::ArrowDown) => panel.scroll(1),
                             Key::Named(NamedKey::PageUp) => {
