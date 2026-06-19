@@ -93,6 +93,7 @@ at **M8** (first time there's >1 region) — not earlier, to avoid a one-impleme
 | `layout.rs` | Binary split tree (`Layout`/`SplitDir`): `compute_rects`/`split`/`remove`. |
 | `block.rs` | OSC 133 command blocks + JSONL history (`BlockTracker`); base64 command decode. |
 | `recall.rs` | `Ctrl-A r` recall overlay (searchable history). |
+| `panel.rs` | `TextPanel` — modal scrollable text panel (AI answers via `host/showPanel`). |
 | `selection.rs` | Mouse text selection + extraction. |
 | `plugin.rs` | **Plugin host**: JSON-RPC transport, `Registry` (chord→command→plugin), `Plugin` process. |
 | `config.rs` | Reads `~/.config/terminal/plugins.toml`. |

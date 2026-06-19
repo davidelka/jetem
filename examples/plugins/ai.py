@@ -43,6 +43,11 @@ def notify(text):
     send({"jsonrpc": "2.0", "id": 1, "method": "host/notify", "params": {"text": text}})
 
 
+def show_panel(title, body):
+    send({"jsonrpc": "2.0", "id": 1, "method": "host/showPanel",
+          "params": {"title": title, "body": body}})
+
+
 def choose_backend():
     forced = os.environ.get("TERMINAL_AI_BACKEND")
     if forced in ("cli", "api"):
@@ -92,7 +97,7 @@ def explain_async(ctx):
     backend = choose_backend()
     try:
         answer = call_cli(user) if backend == "cli" else call_api(user)
-        notify(answer or "(no answer)")
+        show_panel("🤖 AI", answer or "(no answer)")
     except ImportError:
         notify("AI error: `pip install anthropic` (or set TERMINAL_AI_BACKEND=cli)")
     except Exception as e:  # missing key/CLI, network, API error, ...

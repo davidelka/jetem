@@ -20,6 +20,7 @@ use crate::block::Block;
 use crate::font::Font;
 use crate::layout::{Layout, PaneId, SplitDir};
 use crate::pane::{Rect, TerminalPane};
+use crate::panel::TextPanel;
 use crate::plugin::{Plugin, PluginId, PluginInbound, Registry};
 use crate::recall::Recall;
 use crate::render;
@@ -65,6 +66,8 @@ pub struct App {
     pending_prefix: bool,
     /// The command-recall overlay, when open (captures input + drawn on top).
     overlay: Option<Recall>,
+    /// A modal text panel (e.g. an AI answer), when open.
+    panel: Option<TextPanel>,
     /// A transient toast message from `host/notify` and when it was shown.
     toast: Option<(String, Instant)>,
     /// Active text selection (mouse drag), if any.
@@ -112,6 +115,7 @@ impl App {
             mods: ModifiersState::empty(),
             pending_prefix: false,
             overlay: None,
+            panel: None,
             toast: None,
             selection: None,
             selecting: false,
@@ -436,6 +440,17 @@ impl App {
                 }
                 false
             }
+            "host/showPanel" => {
+                let title = params
+                    .get("title")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let body = params.get("body").and_then(|b| b.as_str()).unwrap_or("");
+                let cols = self.win_w as usize / self.font.cell_w.max(1);
+                self.panel = Some(TextPanel::new(title, body, cols));
+                true
+            }
             _ => false, // unknown action
         }
     }
@@ -477,6 +492,10 @@ impl App {
         // The recall overlay draws on top of everything.
         if let Some(overlay) = &self.overlay {
             overlay.draw(&mut buffer, w as usize, h as usize, &mut self.font);
+        }
+        // A modal text panel (e.g. an AI answer) draws above the overlay.
+        if let Some(panel) = &self.panel {
+            panel.draw(&mut buffer, w as usize, h as usize, &mut self.font);
         }
         // A transient toast (from host/notify) along the bottom for a few
         // seconds. Multi-line answers (e.g. from the AI plugin) render as a
@@ -641,6 +660,28 @@ impl ApplicationHandler<UserEvent> for App {
                         }
                         _ => {}
                     }
+                }
+                // A modal panel captures all input while it's open.
+                if let Some(panel) = &mut self.panel {
+                    match &event.logical_key {
+                        Key::Named(NamedKey::Escape) => self.panel = None,
+                        Key::Character(s) if s == "q" => self.panel = None,
+                        Key::Named(NamedKey::ArrowUp) => panel.scroll(-1),
+                        Key::Named(NamedKey::ArrowDown) => panel.scroll(1),
+                        Key::Named(NamedKey::PageUp) => {
+                            let d = panel.page();
+                            panel.scroll(-d);
+                        }
+                        Key::Named(NamedKey::PageDown) => {
+                            let d = panel.page();
+                            panel.scroll(d);
+                        }
+                        _ => {}
+                    }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                    return;
                 }
                 // The recall overlay captures all input while it's open.
                 if self.overlay.is_some() {

@@ -13,6 +13,7 @@ mod font;
 mod grid;
 mod layout;
 mod pane;
+mod panel;
 mod parser;
 mod plugin;
 mod pty;
