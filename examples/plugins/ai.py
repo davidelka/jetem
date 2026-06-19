@@ -5,16 +5,21 @@ Press Ctrl-A i to ask Claude to explain the most recent command (why it failed,
 the likely fix). Subscribes to `command_end` to remember the last command, and
 shows the answer via `host/notify`.
 
-Requirements:
-  - pip install anthropic
-  - export ANTHROPIC_API_KEY=...
+Two backends (set TERMINAL_AI_BACKEND=cli|api to force one):
+  - "cli": shells out to the `claude` CLI in print mode — uses your Claude
+    subscription (Pro/Max), no API key needed.
+  - "api": the `anthropic` SDK (`pip install anthropic` + ANTHROPIC_API_KEY).
+Default: API if ANTHROPIC_API_KEY is set, else the `claude` CLI if present.
 
 Enable via ~/.config/terminal/plugins.toml:
     [[plugin]]
     command = "python3 /abs/path/to/examples/plugins/ai.py"
 """
+import os
 import sys
 import json
+import shutil
+import subprocess
 import threading
 
 MODEL = "claude-opus-4-8"
@@ -38,31 +43,59 @@ def notify(text):
     send({"jsonrpc": "2.0", "id": 1, "method": "host/notify", "params": {"text": text}})
 
 
+def choose_backend():
+    forced = os.environ.get("TERMINAL_AI_BACKEND")
+    if forced in ("cli", "api"):
+        return forced
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "api"
+    if shutil.which("claude"):
+        return "cli"  # use the Claude subscription via the CLI
+    return "api"  # will surface a helpful error
+
+
+def call_api(user):
+    import anthropic  # raises ImportError if the SDK isn't installed
+
+    client = anthropic.Anthropic()
+    resp = client.messages.create(
+        model=MODEL,
+        max_tokens=512,
+        system=SYSTEM,
+        messages=[{"role": "user", "content": user}],
+    )
+    return "".join(b.text for b in resp.content if b.type == "text").strip()
+
+
+def call_cli(user):
+    """One-shot via the `claude` CLI (uses the logged-in subscription)."""
+    claude = shutil.which("claude")
+    if not claude:
+        raise RuntimeError("`claude` CLI not found")
+    proc = subprocess.run(
+        [claude, "-p", user, "--append-system-prompt", SYSTEM],
+        capture_output=True, text=True, timeout=120,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or "claude CLI failed").strip()[:160])
+    return proc.stdout.strip()
+
+
 def explain_async(ctx):
     """Call Claude in a background thread and notify with the answer."""
-    try:
-        import anthropic
-    except ImportError:
-        notify("AI error: `pip install anthropic`")
-        return
-
     cmd = ctx.get("command", "?")
     code = ctx.get("exit_code")
     cwd = ctx.get("cwd") or "?"
     output = (ctx.get("output") or "")[-4000:]
     user = f"$ {cmd}\n(exit {code}, cwd {cwd})\n\n{output}"
 
+    backend = choose_backend()
     try:
-        client = anthropic.Anthropic()
-        resp = client.messages.create(
-            model=MODEL,
-            max_tokens=512,
-            system=SYSTEM,
-            messages=[{"role": "user", "content": user}],
-        )
-        answer = "".join(b.text for b in resp.content if b.type == "text").strip()
+        answer = call_cli(user) if backend == "cli" else call_api(user)
         notify(answer or "(no answer)")
-    except Exception as e:  # missing key, network, API error, ...
+    except ImportError:
+        notify("AI error: `pip install anthropic` (or set TERMINAL_AI_BACKEND=cli)")
+    except Exception as e:  # missing key/CLI, network, API error, ...
         notify(f"AI error: {e}".splitlines()[0][:160])
 
 

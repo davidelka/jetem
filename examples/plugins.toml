@@ -11,7 +11,9 @@ command = "python3 /home/david/projects/terminal/examples/plugins/mux.py"
 command = "python3 /home/david/projects/terminal/examples/plugins/oops.py"
 
 # AI assistant: Ctrl-A i explains the last command via Claude.
-# Needs `pip install anthropic` and `export ANTHROPIC_API_KEY=...`.
+# Backend (TERMINAL_AI_BACKEND): "cli" uses your Claude subscription via the
+# `claude` CLI (no key); "api" uses the anthropic SDK (`pip install anthropic`
+# + ANTHROPIC_API_KEY). Default: api if a key is set, else the claude CLI.
 # [[plugin]]
 # command = "python3 /home/david/projects/terminal/examples/plugins/ai.py"
 

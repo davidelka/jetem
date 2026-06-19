@@ -77,7 +77,8 @@ The event-bus + registries layer is runtime-independent; that's the real design 
 ### Plugins (dogfood the host)
 - [x] AI assistant (`examples/plugins/ai.py`) — `Ctrl-A i` explains the last command via
   Claude (`claude-opus-4-8`), shown as a multi-line toast. Subscribes to `command_end`,
-  invokes asynchronously. Needs `pip install anthropic` + `ANTHROPIC_API_KEY`.
+  invokes asynchronously. Two backends (`TERMINAL_AI_BACKEND`): **cli** (Claude
+  subscription via the `claude` CLI, no key) or **api** (`anthropic` SDK + key).
 - [ ] Rich / structured output renderers (tables, images, foldable)
 - [ ] Custom-draw panels / widgets (needs in-process tier)
 - [ ] Themes & custom symbols
