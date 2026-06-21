@@ -26,6 +26,11 @@ SYSTEM = (
     "code, explain why it failed and the fix in a few short lines. Answer "
     "follow-up questions directly, no preamble."
 )
+COMMAND_SYSTEM = (
+    "Translate the user's request into a single shell command for a Linux "
+    "zsh shell. Output ONLY the command line — no explanation, no markdown, "
+    "no backticks, no leading $."
+)
 
 _out_lock = threading.Lock()
 _state_lock = threading.Lock()
@@ -33,6 +38,7 @@ _last = None       # last command_end params
 _convo = []        # [{"role", "content"}] sent to Claude
 _transcript = []   # display lines for the panel
 _busy = False
+_mode = "chat"     # "chat" or "suggest"
 
 
 def send(obj):
@@ -45,12 +51,24 @@ def notify(text):
     send({"jsonrpc": "2.0", "id": 1, "method": "host/notify", "params": {"text": text}})
 
 
+def panel(title, body, interactive=True):
+    send({"jsonrpc": "2.0", "id": 1, "method": "host/showPanel",
+          "params": {"title": title, "body": body, "input": interactive}})
+
+
+def close_panel():
+    send({"jsonrpc": "2.0", "id": 1, "method": "host/closePanel", "params": {}})
+
+
+def write_to_pane(text):
+    send({"jsonrpc": "2.0", "id": 1, "method": "host/writeToFocusedPane", "params": {"text": text}})
+
+
 def show_panel(thinking=False):
     body = "\n\n".join(_transcript)
     if thinking:
         body += "\n\n🤖 …"
-    send({"jsonrpc": "2.0", "id": 1, "method": "host/showPanel",
-          "params": {"title": "🤖 AI  (type a follow-up, Enter to send)", "body": body, "input": True}})
+    panel("🤖 AI  (type a follow-up, Enter to send)", body)
 
 
 # --- backends ---------------------------------------------------------------
@@ -66,8 +84,8 @@ def choose_backend():
     return "api"
 
 
-def query(messages):
-    """Ask Claude given the full message history."""
+def query(messages, system=SYSTEM):
+    """Ask Claude given the message history and a system prompt."""
     if choose_backend() == "cli":
         claude = shutil.which("claude")
         if not claude:
@@ -78,7 +96,7 @@ def query(messages):
             prompt += f"{who}: {m['content']}\n\n"
         prompt += "Assistant:"
         proc = subprocess.run(
-            [claude, "-p", prompt, "--append-system-prompt", SYSTEM],
+            [claude, "-p", prompt, "--append-system-prompt", system],
             capture_output=True, text=True, timeout=120,
         )
         if proc.returncode != 0:
@@ -87,8 +105,22 @@ def query(messages):
 
     import anthropic  # ImportError handled by caller
     client = anthropic.Anthropic()
-    resp = client.messages.create(model=MODEL, max_tokens=1024, system=SYSTEM, messages=messages)
+    resp = client.messages.create(model=MODEL, max_tokens=1024, system=system, messages=messages)
     return "".join(b.text for b in resp.content if b.type == "text").strip()
+
+
+def clean_command(text):
+    """Strip markdown/prefixes so we paste a bare command line."""
+    cmd = text.strip()
+    if cmd.startswith("```"):
+        cmd = cmd.strip("`")
+        cmd = cmd.split("\n", 1)[-1] if "\n" in cmd else cmd
+    # First non-empty line, minus a leading prompt char.
+    for line in cmd.splitlines():
+        line = line.strip()
+        if line:
+            return line[2:] if line.startswith("$ ") else line.lstrip("`").rstrip("`")
+    return ""
 
 
 def run_turn():
@@ -134,6 +166,27 @@ def start_followup(text):
     threading.Thread(target=run_turn, daemon=True).start()
 
 
+def start_suggest():
+    global _mode
+    _mode = "suggest"
+    panel("💡 Suggest a command", "Describe what you want to do, then press Enter.", interactive=True)
+
+
+def suggest_worker(request):
+    """Translate NL -> command, paste it at the prompt, close the panel."""
+    global _mode
+    try:
+        cmd = clean_command(query([{"role": "user", "content": request}], system=COMMAND_SYSTEM))
+    except Exception as e:
+        panel("💡 Suggest a command", f"error: {str(e).splitlines()[0][:160]}", interactive=False)
+        _mode = "chat"
+        return
+    _mode = "chat"
+    if cmd:
+        write_to_pane(cmd)  # inserted at the prompt, not run
+    close_panel()
+
+
 # --- protocol ---------------------------------------------------------------
 
 def handle(msg):
@@ -145,8 +198,14 @@ def handle(msg):
             "id": msg.get("id"),
             "result": {
                 "name": "ai",
-                "commands": [{"id": "ai.explain", "title": "Explain last command"}],
-                "keybindings": [{"keys": "prefix i", "command": "ai.explain"}],
+                "commands": [
+                    {"id": "ai.explain", "title": "Explain last command"},
+                    {"id": "ai.suggest", "title": "Suggest a command"},
+                ],
+                "keybindings": [
+                    {"keys": "prefix i", "command": "ai.explain"},
+                    {"keys": "prefix c", "command": "ai.suggest"},
+                ],
                 "events": ["command_end"],
             },
         })
@@ -154,14 +213,21 @@ def handle(msg):
         _last = msg.get("params", {})
     elif method == "event/panelInput":
         text = msg.get("params", {}).get("text", "").strip()
-        if text:
+        if not text:
+            return
+        if _mode == "suggest":
+            threading.Thread(target=suggest_worker, args=(text,), daemon=True).start()
+        else:
             start_followup(text)
     elif method == "command/invoke":
-        if msg.get("params", {}).get("command") == "ai.explain":
+        cmd = msg.get("params", {}).get("command")
+        if cmd == "ai.explain":
             if not _last:
                 notify("nothing to explain yet")
             else:
                 start_explain(_last)
+        elif cmd == "ai.suggest":
+            start_suggest()
 
 
 def main():

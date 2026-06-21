@@ -453,6 +453,10 @@ impl App {
                 self.panel = Some(TextPanel::new(title, body, cols, interactive, plugin_id));
                 true
             }
+            "host/closePanel" => {
+                self.panel = None;
+                true
+            }
             _ => false, // unknown action
         }
     }
