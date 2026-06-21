@@ -175,6 +175,7 @@ def start_suggest():
 def suggest_worker(request):
     """Translate NL -> command, paste it at the prompt, close the panel."""
     global _mode
+    panel("💡 Suggest a command", f"request: {request}\n\n🤖 finding a command…", interactive=False)
     try:
         cmd = clean_command(query([{"role": "user", "content": request}], system=COMMAND_SYSTEM))
     except Exception as e:
