@@ -114,8 +114,10 @@ Next: themes (`Theme` extraction), in-process plugin tier (WASM/Rhai). See `docs
 
 ## Working conventions
 
-- **Explain before editing.** For each milestone, describe the design (files, crates, concepts)
-  and wait for David to say go *before* writing code or running `cargo add`.
+- **Explain before *any* change.** Before editing — not only at milestone boundaries — walk
+  David through **which files will be touched and why**, file by file, and wait for his go
+  *before* writing code or running `cargo add`. This is a learning project; the explanation is
+  part of the point, so never skip it even for small or "obvious" changes.
 - **Study-first.** This is a learning project — favor clear, well-commented code and explain the
   "why," including the real-terminal concept behind each piece.
 - **Verify APIs against installed crate source** before coding (the crates' APIs shift between
