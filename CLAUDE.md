@@ -38,16 +38,19 @@ window  ◄── render(grid) ◄── parser(vte) ◄── PTY master ◄─
 - Input path (event loop): winit key event → `encode_key` → bytes → PTY writer → shell.
 - No local echo: we send a keypress, the **shell echoes it back**, and the round trip draws it.
 
-## Plugin model (the target architecture — not built yet)
+## Plugin model (out-of-process tier BUILT at M10; in-process tier later)
 
 **Capability surface** a plugin can use: (1) **panels** — own a window region, run a real
 program *or* custom-draw; (2) **commands + keybindings**; (3) **services** (AI, history);
 (4) **event hooks** (`command_start/end`, exit codes, block events — e.g. "failed → AI");
 (5) **block renderers** (rich output); (6) **theming** (colors/fonts/custom symbols).
+Live today: commands+keybindings, event hooks (`command_end`, `panelInput`), and block
+renderers via host actions (`host/showPanel`/`showTable`/`showTree`/`notify`/…). The protocol
+is published in `docs/plugin-api.md` with a Python SDK (`sdk/jetem_plugin.py`).
 
-**Runtime = tiered.** Out-of-process **MCP-style JSON-RPC over stdio is PRIMARY** (AI, history,
-services — isolated, language-agnostic, fits David's MCP/Claude world). An **in-process tier**
-(WASM or Rhai) is added later for custom-draw panels, glyph/theme providers, and hot-path hooks.
+**Runtime = tiered.** Out-of-process **MCP-style JSON-RPC over stdio is PRIMARY** (built — AI,
+history, services — isolated, language-agnostic, fits David's MCP/Claude world). An **in-process
+tier** (WASM or Rhai) is added later for custom-draw panels, glyph/theme providers, and hot-path hooks.
 Native dylib plugins are ruled out (unsafe, ABI-fragile). The real design work is the
 runtime-independent **event-bus + registries** layer.
 
@@ -110,8 +113,11 @@ Initial **80×24** (resizable); font path hardcoded to DejaVu Sans Mono; display
 ## Milestones
 
 Done: **M1–M10** — engine, resize, alt-screen, multiplexing, command blocks + recall, and the plugin host (out-of-process JSON-RPC; multiplexing dogfooded as a plugin). **AI assistant** plugin (`examples/plugins/ai.py`): `Ctrl-A i` explains the last command, `Ctrl-A c` suggests one, `Ctrl-A m` picks the model (opus/sonnet/haiku/fable, or `JETEM_AI_MODEL`), via Claude (default `claude-opus-4-8`). Two backends (`JETEM_AI_BACKEND`): **cli** (your Claude subscription via the `claude` CLI, no key) or **api** (`anthropic` SDK + `ANTHROPIC_API_KEY`). The cli backend keeps a **persistent** `claude` process (stream-json mode), pre-warmed at load with a warm-standby per conversation, so questions answer at model speed (~5–8s) instead of cold-start speed; one-shot `claude -p` is the fallback. When touching Claude/API code, follow the `claude-api` skill.
-**M11 (started): rich/structured output renderers.** First renderer is **tables**: `host/showTable` + the `TextPanel` table mode (core rendering primitive) driven by `richout.py` (`Ctrl-A t` — detects JSON / aligned columns; *policy* in the plugin). Deferred: images (sixel/kitty), foldable JSON trees, inline-in-scrollback rendering.
-Next: themes (`Theme` extraction), in-process plugin tier (WASM/Rhai). See `docs/roadmap.md`.
+**M11 (done): rich/structured output renderers.** Two renderers, both driven by `richout.py` (`Ctrl-A t`, *policy* in the plugin): **tables** (`host/showTable` + the `TextPanel` table mode) and a **foldable JSON tree** (`host/showTree` + a navigable tree panel mode). `richout` routes by shape — list-of-objects → table, flat dict → key/value table, nested → tree.
+**M12 (done): themes.** `Theme` extraction — all paint colors in `src/theme.rs`, overridable via `~/.config/jetem/theme.toml` (hex strings, partial). Sample at `examples/theme.toml`.
+Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugin tier (WASM/Rhai), plugin-driven theming (`host/setTheme`). See `docs/roadmap.md`.
+
+**Repo:** public on GitHub at https://github.com/davidelka/jetem (`main`, ssh remote `origin`). Renamed from "terminal" → "jetem". 60 unit tests passing.
 
 ## Working conventions
 
@@ -125,7 +131,7 @@ Next: themes (`Theme` extraction), in-process plugin tier (WASM/Rhai). See `docs
   versions; grep `~/.cargo/registry/src/...` rather than guessing).
 - **Milestone-based commits**, only when asked. End commit messages with the
   `Co-Authored-By: Claude Opus 4.8 (1M context)` trailer. Currently committing to `main`.
-- Keep unit tests green (`cargo test`; 15 passing). Add tests for grid/parser logic.
+- Keep unit tests green (`cargo test`; 60 passing). Add tests for grid/parser/panel/theme/config logic.
 
 ## Build / test / run
 
