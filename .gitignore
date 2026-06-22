@@ -1,1 +1,8 @@
 /target
+
+# graphify knowledge-graph build artifacts
+/graphify-out
+
+# Python bytecode (from the plugin SDK / example plugins)
+__pycache__/
+*.pyc
