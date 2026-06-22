@@ -82,6 +82,11 @@ class Plugin:
         """Render a table. `headers` is a list of strings; `rows` a list of lists."""
         self._send("host/showTable", {"title": title, "headers": headers, "rows": rows})
 
+    def show_tree(self, title, tree):
+        """Render a foldable tree. `tree` is a node `{label, children: [...]}` (or a
+        list of such nodes); a leaf omits `children`."""
+        self._send("host/showTree", {"title": title, "tree": tree})
+
     def write_to_pane(self, text):
         self._send("host/writeToFocusedPane", {"text": text})
 

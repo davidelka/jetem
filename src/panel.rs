@@ -37,12 +37,29 @@ pub struct TextPanel {
     // when set, the panel renders as a table (header band + zebra rows); the raw
     // data is kept for TSV copy. `lines` holds the rendered, fixed-width rows.
     table: Option<TableMeta>,
+    // when set, the panel renders as a foldable tree; `lines` holds the currently
+    // visible rows (recomputed on fold/cursor changes by `sync_tree`).
+    tree: Option<TreeData>,
 }
 
 /// Raw table data, kept for TSV copy and header/zebra styling in `draw`.
 struct TableMeta {
     headers: Vec<String>,
     rows: Vec<Vec<String>>,
+}
+
+/// One node of a foldable tree, in pre-order (DFS). A node's children are the
+/// following nodes with a greater `depth`, up to the next node of equal/less depth.
+pub struct TreeNode {
+    pub depth: usize,
+    pub label: String,
+    pub has_children: bool,
+    pub collapsed: bool,
+}
+
+struct TreeData {
+    nodes: Vec<TreeNode>,
+    cursor: usize, // index into the *visible* rows
 }
 
 impl TextPanel {
@@ -59,6 +76,7 @@ impl TextPanel {
             owner,
             input: String::new(),
             table: None,
+            tree: None,
         }
     }
 
@@ -86,7 +104,96 @@ impl TextPanel {
             owner,
             input: String::new(),
             table: Some(TableMeta { headers, rows }),
+            tree: None,
         }
+    }
+
+    /// Build a foldable tree panel from pre-order `nodes`. Read-only but navigable:
+    /// arrows move the cursor and expand/collapse (handled in `window.rs`).
+    pub fn new_tree(title: String, nodes: Vec<TreeNode>, max_cols: usize, owner: usize) -> Self {
+        let cols = MAX_COLS.min(max_cols.max(10));
+        let mut p = Self {
+            title,
+            lines: Vec::new(),
+            scroll: 0,
+            cols,
+            anchor: None,
+            head: (0, 0),
+            interactive: false,
+            owner,
+            input: String::new(),
+            table: None,
+            tree: Some(TreeData { nodes, cursor: 0 }),
+        };
+        p.sync_tree();
+        // Size the panel to the widest (fully expanded) row.
+        let widest = p.lines.iter().map(|l| l.chars().count()).max().unwrap_or(10);
+        p.cols = widest.clamp(10, MAX_COLS);
+        p
+    }
+
+    pub fn is_tree(&self) -> bool {
+        self.tree.is_some()
+    }
+
+    /// Recompute the visible rows from the tree's collapsed state into `lines`,
+    /// clamp the cursor, and scroll to keep it on screen.
+    fn sync_tree(&mut self) {
+        let (lines, count) = match &self.tree {
+            Some(t) => {
+                let vis = visible_indices(&t.nodes);
+                let lines = vis.iter().map(|&i| render_node(&t.nodes[i])).collect::<Vec<_>>();
+                (lines, vis.len())
+            }
+            None => return,
+        };
+        self.lines = lines;
+        if let Some(t) = &mut self.tree {
+            t.cursor = t.cursor.min(count.saturating_sub(1));
+        }
+        let cursor = self.tree.as_ref().map(|t| t.cursor).unwrap_or(0);
+        let vr = self.visible_rows();
+        if cursor < self.scroll {
+            self.scroll = cursor;
+        } else if cursor >= self.scroll + vr {
+            self.scroll = cursor + 1 - vr;
+        }
+    }
+
+    pub fn tree_move(&mut self, delta: isize) {
+        if let Some(t) = &mut self.tree {
+            let count = visible_indices(&t.nodes).len();
+            if count == 0 {
+                return;
+            }
+            t.cursor = (t.cursor as isize + delta).clamp(0, count as isize - 1) as usize;
+        }
+        self.sync_tree();
+    }
+
+    /// Expand (`collapsed=false`) or collapse the node under the cursor.
+    pub fn tree_set_collapsed(&mut self, collapsed: bool) {
+        if let Some(t) = &mut self.tree {
+            let vis = visible_indices(&t.nodes);
+            if let Some(&ni) = vis.get(t.cursor) {
+                if t.nodes[ni].has_children {
+                    t.nodes[ni].collapsed = collapsed;
+                }
+            }
+        }
+        self.sync_tree();
+    }
+
+    pub fn tree_toggle(&mut self) {
+        if let Some(t) = &mut self.tree {
+            let vis = visible_indices(&t.nodes);
+            if let Some(&ni) = vis.get(t.cursor) {
+                if t.nodes[ni].has_children {
+                    t.nodes[ni].collapsed = !t.nodes[ni].collapsed;
+                }
+            }
+        }
+        self.sync_tree();
     }
 
     fn visible_rows(&self) -> usize {
@@ -224,6 +331,7 @@ impl TextPanel {
         render::draw_text(buf, w, h, font, g.content_x, g.rect.y + PAD, &self.title, p.title.rgb(), Some(p.bg.rgb()));
 
         let table = self.table.is_some();
+        let tree_cursor = self.tree.as_ref().map(|t| t.cursor);
         for row in 0..g.rows {
             let line_idx = self.scroll + row;
             if line_idx >= self.lines.len() {
@@ -241,6 +349,11 @@ impl TextPanel {
                     render::fill(buf, w, h, full, p.stripe.rgb());
                 }
             }
+            // Tree: highlight the row under the cursor.
+            if tree_cursor == Some(line_idx) {
+                let full = Rect::new(g.content_x, y, self.cols * g.cw, g.ch);
+                render::fill(buf, w, h, full, p.sel.rgb());
+            }
             if let Some((c0, c1)) = self.sel_cols(line_idx, line.chars().count()) {
                 let hx = g.content_x + c0 * g.cw;
                 let hw = (c1 - c0) * g.cw;
@@ -255,11 +368,12 @@ impl TextPanel {
             let prompt = format!("> {}", self.input);
             render::draw_text(buf, w, h, font, g.content_x, footer_y, &prompt, p.input.rgb(), Some(p.bg.rgb()));
         } else {
-            render::draw_text(
-                buf, w, h, font, g.content_x, footer_y,
-                "drag to select · Ctrl-Shift-C copy · ↑/↓ scroll · Esc close",
-                p.hint.rgb(), Some(p.bg.rgb()),
-            );
+            let hint = if self.tree.is_some() {
+                "↑/↓ move · →/Enter expand · ← collapse · Ctrl-Shift-C copy · Esc close"
+            } else {
+                "drag to select · Ctrl-Shift-C copy · ↑/↓ scroll · Esc close"
+            };
+            render::draw_text(buf, w, h, font, g.content_x, footer_y, hint, p.hint.rgb(), Some(p.bg.rgb()));
         }
     }
 }
@@ -346,6 +460,37 @@ fn render_table(headers: &[String], rows: &[Vec<String>], cols: usize) -> (Vec<S
         lines.push(fmt(r));
     }
     (lines, widths.iter().sum::<usize>() + sep_total)
+}
+
+/// Indices of the tree nodes currently visible: a node is hidden when any
+/// ancestor is collapsed. Walks pre-order, skipping subtrees under a collapsed node.
+fn visible_indices(nodes: &[TreeNode]) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut hide_below: Option<usize> = None; // hide deeper-than-this until we exit
+    for (i, n) in nodes.iter().enumerate() {
+        if let Some(d) = hide_below {
+            if n.depth > d {
+                continue;
+            }
+            hide_below = None;
+        }
+        out.push(i);
+        if n.has_children && n.collapsed {
+            hide_below = Some(n.depth);
+        }
+    }
+    out
+}
+
+/// Render one tree row: indent + a `▾`/`▸` marker (or space for a leaf) + label.
+fn render_node(n: &TreeNode) -> String {
+    let indent = "  ".repeat(n.depth);
+    let marker = if n.has_children {
+        if n.collapsed { "▸" } else { "▾" }
+    } else {
+        " "
+    };
+    format!("{indent}{marker} {}", n.label)
 }
 
 /// Left-justify `s` to `w` columns, truncating with a trailing `…` if too long.
@@ -439,5 +584,31 @@ mod tests {
         let (lines, _w) = render_table(&["h".to_string()], &[vec!["abcdefghij".to_string()]], 5);
         assert_eq!(lines[1].chars().count(), 5);
         assert!(lines[1].ends_with('…'));
+    }
+
+    fn node(depth: usize, label: &str, has_children: bool) -> TreeNode {
+        TreeNode { depth, label: label.into(), has_children, collapsed: false }
+    }
+
+    #[test]
+    fn tree_folds_and_unfolds() {
+        // root ▾ [ a, b ▾ [ b1 ] ]
+        let nodes = vec![
+            node(0, "root", true),
+            node(1, "a", false),
+            node(1, "b", true),
+            node(2, "b1", false),
+        ];
+        let mut p = TextPanel::new_tree("t".into(), nodes, 40, 0);
+        assert_eq!(p.lines.len(), 4); // all visible
+        assert!(p.lines[0].starts_with("▾")); // root expanded
+
+        p.tree_move(2); // cursor on "b"
+        p.tree_set_collapsed(true); // collapse b -> b1 hidden
+        assert_eq!(p.lines.len(), 3);
+        assert!(p.lines[2].starts_with("  ▸")); // b now collapsed (depth 1 indent)
+
+        p.tree_toggle(); // expand b again
+        assert_eq!(p.lines.len(), 4);
     }
 }

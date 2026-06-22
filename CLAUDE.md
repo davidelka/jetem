@@ -94,7 +94,7 @@ at **M8** (first time there's >1 region) — not earlier, to avoid a one-impleme
 | `layout.rs` | Binary split tree (`Layout`/`SplitDir`): `compute_rects`/`split`/`remove`. |
 | `block.rs` | OSC 133 command blocks + JSONL history (`BlockTracker`); base64 command decode. |
 | `recall.rs` | `Ctrl-A r` recall overlay (searchable history). |
-| `panel.rs` | `TextPanel` — modal scrollable panel: wrapped text (`host/showPanel`) **or** an aligned, zebra-striped table (`host/showTable`); mark/copy, TSV copy for tables. |
+| `panel.rs` | `TextPanel` — modal scrollable panel: wrapped text (`host/showPanel`), an aligned zebra-striped table (`host/showTable`), **or** a foldable tree (`host/showTree`); mark/copy, TSV copy for tables, arrow-key fold nav for trees. |
 | `selection.rs` | Mouse text selection + extraction. |
 | `plugin.rs` | **Plugin host**: JSON-RPC transport, `Registry` (chord→command→plugin), `Plugin` process. |
 | `config.rs` | Plugin sources: `~/.config/jetem/plugins.toml` (explicit commands) **+** drop-in dir `~/.config/jetem/plugins/` (executable→shebang, else `.py`/`.js`/`.sh`→interpreter). |

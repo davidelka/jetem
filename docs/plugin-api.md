@@ -185,6 +185,7 @@ can ignore). Unknown actions reply `{"ok":false}`.
 | `host/showPanel` | `{"title": string, "body": string, "input": bool}` | Open a modal scrollable text panel. With `"input": true` it's interactive: the user can type a line and press Enter, which is delivered back to you as the [`panelInput`](#events) event. |
 | `host/closePanel` | `{}` | Close the panel. |
 | `host/showTable` | `{"title": string, "headers": [string], "rows": [[any]]}` | Open a modal table panel: a header band over aligned, zebra-striped rows. Cell values that aren't strings are stringified; columns are sized to content and truncated with `…` to fit. Read-only; `Ctrl-Shift-C` copies the whole table as TSV. |
+| `host/showTree` | `{"title": string, "tree": node}`, where `node = {"label": string, "children"?: [node]}` (or an array of nodes) | Open a modal **foldable tree** panel. Leaves omit `children`. ↑/↓ move; →/Enter/Space expand, ← collapse; Esc/q close. Read-only; `Ctrl-Shift-C` copies the visible tree. |
 | `host/writeToFocusedPane` | `{"text": string}` | Type `text` into the focused shell (as if the user typed it — it is **not** auto-run; no trailing newline is added). |
 | `host/splitPane` | `{"dir": "leftright" | "topbottom"}` | Split the focused pane (default `leftright`). |
 | `host/focusPane` | `{"dir": "left" | "right" | "up" | "down"}` | Move focus to the neighbouring pane. |

@@ -43,14 +43,15 @@ def render():
 
 
 def _try_json(text):
-    """A JSON array of objects -> a row each; a JSON object -> key/value; nested
-    or scalar JSON -> a pretty-printed text panel."""
+    """A list of flat objects -> a table; a flat object -> key/value table;
+    anything nested -> a foldable tree."""
     if text[0] not in "{[":
         return False
     try:
         data = json.loads(text)
     except (ValueError, TypeError):
         return False
+    flat = (lambda v: not isinstance(v, (dict, list)))
     if isinstance(data, list) and data and all(isinstance(d, dict) for d in data):
         cols = []
         for d in data:
@@ -59,12 +60,22 @@ def _try_json(text):
                     cols.append(k)
         rows = [[_scalar(d.get(c, "")) for c in cols] for d in data[:MAX_ROWS]]
         plug.show_table("📦 JSON", cols, rows)
-    elif isinstance(data, dict):
+    elif isinstance(data, dict) and all(flat(v) for v in data.values()):
         rows = [[k, _scalar(v)] for k, v in list(data.items())[:MAX_ROWS]]
         plug.show_table("📦 JSON", ["key", "value"], rows)
     else:
-        plug.show_panel("📦 JSON", json.dumps(data, indent=2))
+        plug.show_tree("📦 JSON", _json_node("(root)", data))
     return True
+
+
+def _json_node(label, value):
+    """Build a foldable-tree node ({label, children?}) from a JSON value. Dicts and
+    lists become parents; scalars become `label: value` leaves."""
+    if isinstance(value, dict):
+        return {"label": label, "children": [_json_node(str(k), v) for k, v in value.items()]}
+    if isinstance(value, list):
+        return {"label": label, "children": [_json_node(f"[{i}]", v) for i, v in enumerate(value)]}
+    return {"label": f"{label}: {_scalar(value)}"}
 
 
 def _try_table(text):

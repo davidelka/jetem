@@ -84,8 +84,9 @@ The event-bus + registries layer is runtime-independent; that's the real design 
   `examples/plugins/richout.py` (`Ctrl-A t` — detects JSON or whitespace-aligned columns;
   detection/parsing is plugin policy). The plugin contract is now published
   (`docs/plugin-api.md`) with a Python SDK (`sdk/jetem_plugin.py`), so anyone can write
-  a renderer without touching core. Deferred: images (sixel/kitty), foldable JSON trees,
-  inline-in-scrollback rendering (a larger render-model change).
+  a renderer without touching core. **Foldable JSON tree done** too: `host/showTree` +
+  a navigable tree panel mode, with `richout.py` routing nested JSON to it (`Ctrl-A t`).
+  Deferred: images (sixel/kitty), inline-in-scrollback rendering (a larger render-model change).
 - [ ] Custom-draw panels / widgets (needs in-process tier)
 - [ ] Themes & custom symbols
 

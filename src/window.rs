@@ -20,7 +20,7 @@ use crate::block::Block;
 use crate::font::Font;
 use crate::layout::{Layout, PaneId, SplitDir};
 use crate::pane::{Rect, TerminalPane};
-use crate::panel::TextPanel;
+use crate::panel::{TextPanel, TreeNode};
 use crate::plugin::{Plugin, PluginId, PluginInbound, Registry};
 use crate::recall::Recall;
 use crate::render;
@@ -503,6 +503,20 @@ impl App {
                 self.panel = Some(TextPanel::new_table(title, headers, rows, cols, plugin_id));
                 true
             }
+            "host/showTree" => {
+                let title = params
+                    .get("title")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let mut nodes = Vec::new();
+                if let Some(tree) = params.get("tree") {
+                    flatten_tree(tree, 0, &mut nodes);
+                }
+                let cols = self.win_w as usize / self.font.cell_w.max(1);
+                self.panel = Some(TextPanel::new_tree(title, nodes, cols, plugin_id));
+                true
+            }
             "host/closePanel" => {
                 self.panel = None;
                 true
@@ -749,6 +763,13 @@ impl ApplicationHandler<UserEvent> for App {
                     if let Some(panel) = &mut self.panel {
                         match &event.logical_key {
                             Key::Named(NamedKey::Escape) => close = true,
+                            // Foldable-tree navigation (a tree panel is non-interactive).
+                            Key::Named(NamedKey::ArrowUp) if panel.is_tree() => panel.tree_move(-1),
+                            Key::Named(NamedKey::ArrowDown) if panel.is_tree() => panel.tree_move(1),
+                            Key::Named(NamedKey::ArrowRight) if panel.is_tree() => panel.tree_set_collapsed(false),
+                            Key::Named(NamedKey::ArrowLeft) if panel.is_tree() => panel.tree_set_collapsed(true),
+                            Key::Named(NamedKey::Enter) if panel.is_tree() => panel.tree_toggle(),
+                            Key::Named(NamedKey::Space) if panel.is_tree() => panel.tree_toggle(),
                             Key::Named(NamedKey::Enter) if panel.interactive => {
                                 if let Some(text) = panel.take_input() {
                                     submit = Some((panel.owner, text));
@@ -898,6 +919,31 @@ fn chord_string(event: &KeyEvent) -> Option<String> {
         Key::Named(NamedKey::ArrowRight) => Some("prefix right".into()),
         _ => None,
     }
+}
+
+/// Flatten a nested `{label, children:[...]}` JSON tree (or a top-level array of
+/// such nodes) into a pre-order `Vec<TreeNode>` with depths.
+fn json_flatten_node(node: &Value, depth: usize, out: &mut Vec<TreeNode>) {
+    if let Some(arr) = node.as_array() {
+        for child in arr {
+            json_flatten_node(child, depth, out);
+        }
+        return;
+    }
+    let label = node.get("label").and_then(|l| l.as_str()).unwrap_or("").to_string();
+    let children = node.get("children").and_then(|c| c.as_array());
+    let has_children = children.is_some_and(|c| !c.is_empty());
+    out.push(TreeNode { depth, label, has_children, collapsed: false });
+    if let Some(ch) = children {
+        for c in ch {
+            json_flatten_node(c, depth + 1, out);
+        }
+    }
+}
+
+/// Entry point used by `host/showTree` (named to read well at the call site).
+fn flatten_tree(node: &Value, depth: usize, out: &mut Vec<TreeNode>) {
+    json_flatten_node(node, depth, out);
 }
 
 /// Coerce a JSON array (the `headers`, or one `rows` entry) into `Vec<String>`:
