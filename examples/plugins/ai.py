@@ -13,7 +13,7 @@ Two backends (set TERMINAL_AI_BACKEND=cli|api to force one):
   - "api": the `anthropic` SDK (`pip install anthropic` + ANTHROPIC_API_KEY).
 Default: api if ANTHROPIC_API_KEY is set, else the `claude` CLI if present.
 
-Enable via ~/.config/terminal/plugins.toml:
+Enable via ~/.config/jetem/plugins.toml:
     [[plugin]]
     command = "python3 /abs/path/to/examples/plugins/ai.py"
 """

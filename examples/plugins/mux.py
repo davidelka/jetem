@@ -5,7 +5,7 @@ Implements the Ctrl-A split/focus/close keybindings entirely as a plugin, by
 registering chords and calling host actions. Proves the plugin host drives real
 UX and that the core no longer needs the multiplexing keys hardcoded.
 
-Enable via ~/.config/terminal/plugins.toml:
+Enable via ~/.config/jetem/plugins.toml:
     [[plugin]]
     command = "python3 /abs/path/to/examples/plugins/mux.py"
 """

@@ -5,7 +5,7 @@ Subscribes to `command_end` and, when a command exits non-zero, asks the host
 to show a toast. Demonstrates the event bus / reaction loop (the seed of an AI
 "explain this failure" assistant).
 
-Enable via ~/.config/terminal/plugins.toml:
+Enable via ~/.config/jetem/plugins.toml:
     [[plugin]]
     command = "python3 /abs/path/to/examples/plugins/oops.py"
 """

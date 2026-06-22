@@ -72,7 +72,7 @@ The event-bus + registries layer is runtime-independent; that's the real design 
     — it registers the `Ctrl-A` split/focus/close chords and calls host actions.
     Core `window.rs` no longer hardcodes them (keeps only `r` recall + `a`
     literal Ctrl-A). Proves the host drives real UX; the compositor stays core.
-  - Config: `~/.config/terminal/plugins.toml` lists plugins (opt-in).
+  - Config: `~/.config/jetem/plugins.toml` lists plugins (opt-in).
 
 ### Plugins (dogfood the host)
 - [x] AI assistant (`examples/plugins/ai.py`) — `Ctrl-A i` explains the last command via

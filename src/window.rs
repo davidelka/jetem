@@ -366,7 +366,7 @@ impl App {
                 if let Some(pv) = m.protocol_version {
                     if pv != crate::plugin::PROTOCOL_VERSION {
                         eprintln!(
-                            "[terminal] plugin '{}' targets protocol v{pv}, host speaks v{} — may misbehave",
+                            "[jetem] plugin '{}' targets protocol v{pv}, host speaks v{} — may misbehave",
                             m.name,
                             crate::plugin::PROTOCOL_VERSION
                         );
@@ -599,7 +599,7 @@ impl ApplicationHandler<UserEvent> for App {
             return; // already created (resumed can fire more than once)
         }
         let attrs = Window::default_attributes()
-            .with_title("terminal")
+            .with_title("jetem")
             .with_inner_size(PhysicalSize::new(self.win_w, self.win_h));
 
         let window = Arc::new(event_loop.create_window(attrs).unwrap());

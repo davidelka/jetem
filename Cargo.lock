@@ -571,6 +571,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "jetem"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "fontdue",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "softbuffer",
+ "toml",
+ "vte",
+ "winit",
+]
+
+[[package]]
 name = "jni"
 version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1584,22 +1600,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "terminal"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arboard",
- "fontdue",
- "portable-pty",
- "serde",
- "serde_json",
- "softbuffer",
- "toml",
- "vte",
- "winit",
 ]
 
 [[package]]

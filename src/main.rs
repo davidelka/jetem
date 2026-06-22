@@ -58,13 +58,13 @@ fn main() -> anyhow::Result<()> {
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
 
-    // Spawn configured plugins (explicit opt-in via ~/.config/terminal/plugins.toml).
+    // Spawn configured plugins (explicit opt-in via ~/.config/jetem/plugins.toml).
     let mut plugins = HashMap::new();
     for (id, pc) in config::load().plugin.iter().enumerate() {
         if let Some(p) = Plugin::spawn(id, &pc.command, proxy.clone()) {
             plugins.insert(id, p);
         } else {
-            eprintln!("[terminal] failed to spawn plugin: {}", pc.command);
+            eprintln!("[jetem] failed to spawn plugin: {}", pc.command);
         }
     }
 

@@ -190,7 +190,7 @@ impl Plugin {
     /// version so the plugin can adapt (or refuse) if it speaks a different one.
     pub fn initialize(&self) {
         self.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize",
-            "params":{"host":"terminal","protocolVersion":PROTOCOL_VERSION}}));
+            "params":{"host":"jetem","protocolVersion":PROTOCOL_VERSION}}));
     }
 
     /// Tell the plugin one of its commands fired.

@@ -8,7 +8,7 @@ host to draw a table via `host/showTable` — or a text panel for nested JSON.
 Detection/parsing is *policy* and lives here; the table-drawing primitive lives
 in core. Built on the terminal_plugin SDK.
 
-Enable via ~/.config/terminal/plugins.toml:
+Enable via ~/.config/jetem/plugins.toml:
     [[plugin]]
     command = "python3 /abs/path/to/examples/plugins/richout.py"
 """

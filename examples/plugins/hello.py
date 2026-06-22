@@ -5,7 +5,7 @@ It speaks newline-delimited JSON-RPC 2.0 over stdin/stdout:
   - on `initialize`, it registers the chord `Ctrl-A g` -> command `hello.split`
   - on `command/invoke`, it asks the host to split the focused pane
 
-Run it via ~/.config/terminal/plugins.toml:
+Run it via ~/.config/jetem/plugins.toml:
     [[plugin]]
     command = "python3 /abs/path/to/examples/plugins/hello.py"
 """

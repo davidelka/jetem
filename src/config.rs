@@ -8,12 +8,12 @@
 //!    command = "python3 /path/to/plugin.py"
 //!    ```
 //!
-//! 2. **Drop-in directory** — every file in `~/.config/terminal/plugins/` loads
+//! 2. **Drop-in directory** — every file in `~/.config/jetem/plugins/` loads
 //!    automatically, no TOML edit. An executable file is run directly (its shebang
 //!    chooses the interpreter); otherwise a known extension maps to one
 //!    (`.py`→`python3`, `.js`→`node`, `.sh`→`sh`). Dropping the file is the opt-in.
 //!
-//! Both live under `$XDG_CONFIG_HOME/terminal/` (default `~/.config/terminal/`).
+//! Both live under `$XDG_CONFIG_HOME/jetem/` (default `~/.config/jetem/`).
 
 use std::path::{Path, PathBuf};
 
@@ -41,7 +41,7 @@ pub fn load() -> Config {
     config
 }
 
-/// Discover plugins dropped into `~/.config/terminal/plugins/`. Skips hidden
+/// Discover plugins dropped into `~/.config/jetem/plugins/`. Skips hidden
 /// files, non-files, files of unknown type, and any file already referenced by a
 /// TOML `command` (so it doesn't load twice). Sorted for a stable load order.
 fn scan_drop_in(existing: &[PluginConfig]) -> Vec<PluginConfig> {
@@ -67,7 +67,7 @@ fn scan_drop_in(existing: &[PluginConfig]) -> Vec<PluginConfig> {
         match command_for(&path) {
             Some(command) => out.push(PluginConfig { command }),
             None => eprintln!(
-                "[terminal] skipping drop-in plugin (not executable, unknown type): {path_str}"
+                "[jetem] skipping drop-in plugin (not executable, unknown type): {path_str}"
             ),
         }
     }
@@ -108,7 +108,7 @@ fn config_dir() -> Option<PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .map(|base| base.join("terminal"))
+        .map(|base| base.join("jetem"))
 }
 
 fn config_path() -> Option<PathBuf> {

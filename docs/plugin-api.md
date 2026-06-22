@@ -1,6 +1,6 @@
 # Plugin API
 
-How to write a plugin for **terminal** — in any language, living anywhere on disk,
+How to write a plugin for **jetem** — in any language, living anywhere on disk,
 with no recompilation of the core.
 
 > Status: this documents the **current** out-of-process protocol (the M10 plugin
@@ -73,7 +73,7 @@ for line in sys.stdin:                      # blocks until the host sends a line
                   "params": {"text": "hi 👋 from a plugin"}})
 ```
 
-**2. Enable it.** Add a block to `~/.config/terminal/plugins.toml` (create the file
+**2. Enable it.** Add a block to `~/.config/jetem/plugins.toml` (create the file
 if it doesn't exist):
 
 ```toml
@@ -133,7 +133,7 @@ exits.
 
 | Method | When | Params | You should |
 |---|---|---|---|
-| `initialize` | once, at startup | `{"host":"terminal","protocolVersion":1}` | reply with your [manifest](#manifest) (a `result`, echoing the request `id`) |
+| `initialize` | once, at startup | `{"host":"jetem","protocolVersion":1}` | reply with your [manifest](#manifest) (a `result`, echoing the request `id`) |
 | `command/invoke` | a keybinding or command you registered fired | `{"command":"<your command id>"}` | do the thing (this is a notification — no reply expected) |
 | `event/<name>` | an [event](#events) you subscribed to occurred | event-specific (see below) | react (notification — no reply expected) |
 | a `result` with `{"ok":bool}` | reply to a [host action](#host-actions) you sent | — | optional to read; most plugins ignore it |
@@ -250,7 +250,7 @@ the last one to load wins, so namespace your ids and pick chords thoughtfully.
 
 ## Configuration
 
-Plugins are explicit opt-in. The terminal reads `~/.config/terminal/plugins.toml`
+Plugins are explicit opt-in. The terminal reads `~/.config/jetem/plugins.toml`
 (`$XDG_CONFIG_HOME/terminal/plugins.toml` if that's set). Each `[[plugin]]` block
 has one field, `command`:
 
@@ -270,7 +270,7 @@ the next terminal launch.
 ### Drop-in directory
 
 For simple plugins you don't even need to touch the TOML: **every file in
-`~/.config/terminal/plugins/` loads automatically.** Dropping the file is the
+`~/.config/jetem/plugins/` loads automatically.** Dropping the file is the
 opt-in.
 
 How a bare file is launched:
@@ -328,7 +328,7 @@ Honest about where the contract is today:
   your own stderr) to debug — both land in the terminal's launching console. If your
   plugin crashes, the host removes it without an in-app error surface.
 - **No install command yet.** Plugins are enabled by a TOML entry or by dropping a
-  file into `~/.config/terminal/plugins/` — there's no package/registry install
+  file into `~/.config/jetem/plugins/` — there's no package/registry install
   flow, and changes apply on the next launch (no hot reload).
 - **Fixed capability surface.** You can only do what the [host actions](#host-actions)
   and [events](#events) tables list. New capabilities require a (small) core change
