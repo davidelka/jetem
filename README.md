@@ -100,6 +100,7 @@ are registered by plugins.
 | `Ctrl-A x` | close the focused pane | `mux.py` |
 | `Ctrl-A i` | explain the last command (AI) | `ai.py` |
 | `Ctrl-A c` | suggest a command (NL → shell) | `ai.py` |
+| `Ctrl-A m` | pick the AI model (opus/sonnet/haiku/fable) | `ai.py` |
 | `Ctrl-A t` | render last output as a table | `richout.py` |
 
 ## Layout

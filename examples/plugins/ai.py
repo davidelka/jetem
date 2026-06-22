@@ -4,6 +4,8 @@
 Press Ctrl-A i to ask Claude about the most recent command. The answer opens in
 a panel; type a follow-up there and press Enter to continue the conversation.
 Ctrl-A c translates a natural-language request into a shell command.
+Ctrl-A m picks the model (opus / sonnet / haiku / fable, or any id); the default
+is JETEM_AI_MODEL or opus.
 
 Two backends (set JETEM_AI_BACKEND=cli|api to force one):
   - "cli": drives the `claude` CLI — uses your Claude subscription, no key. To
@@ -24,7 +26,36 @@ import shutil
 import subprocess
 import threading
 
-MODEL = "claude-opus-4-8"
+# Models the picker offers (alias -> full id). `_model` may also be any other id.
+MODELS = [
+    ("opus", "claude-opus-4-8"),
+    ("sonnet", "claude-sonnet-4-6"),
+    ("haiku", "claude-haiku-4-5"),
+    ("fable", "claude-fable-5"),
+]
+_ALIASES = dict(MODELS)
+
+
+def _resolve(text):
+    """Map a picker input — a number ('2'), an alias ('sonnet'), or a full id —
+    to a model id. Empty/unknown falls back to opus."""
+    t = (text or "").strip()
+    if t.isdigit() and 1 <= int(t) <= len(MODELS):
+        return MODELS[int(t) - 1][1]
+    if not t:
+        return _ALIASES["opus"]
+    return _ALIASES.get(t.lower(), t)  # alias -> id, else treat as a literal id
+
+
+def _model_alias(model_id):
+    """Friendly name for a model id, falling back to the id itself."""
+    return next((a for a, mid in MODELS if mid == model_id), model_id)
+
+
+# The active model; overridable at launch with JETEM_AI_MODEL, or at runtime via
+# the Ctrl-A m picker.
+_model = _resolve(os.environ.get("JETEM_AI_MODEL", "opus"))
+
 SYSTEM = (
     "You are a terse shell assistant. Given a command, its output, and exit "
     "code, explain why it failed and the fix in a few short lines. Answer "
@@ -42,7 +73,7 @@ _last = None       # last command_end params
 _convo = []        # [{"role", "content"}] — display + the api backend's history
 _transcript = []   # display lines for the panel
 _busy = False
-_mode = "chat"     # "chat" or "suggest"
+_mode = "chat"     # "chat", "suggest", or "model"
 
 # Persistent cli-backend sessions (lazily warmed; see ClaudeSession).
 _session_lock = threading.Lock()
@@ -111,14 +142,15 @@ class ClaudeSession:
     conversation across `.ask()` calls, so the costly startup is paid once (and
     can be paid ahead of time with `.warm()`), not per question."""
 
-    def __init__(self, system):
+    def __init__(self, system, model):
         self._system = system
+        self._model = model  # fixed for this process's lifetime
         self._proc = None
         self._lock = threading.Lock()
 
     def _spawn(self):
         return subprocess.Popen(
-            _STREAM_ARGS + [self._system],
+            _STREAM_ARGS + [self._system, "--model", self._model],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             text=True, bufsize=1,
         )
@@ -179,7 +211,7 @@ def new_chat():
     with _session_lock:
         spare, _chat_standby = _chat_standby, None
     if spare is None:
-        spare = ClaudeSession(SYSTEM)
+        spare = ClaudeSession(SYSTEM, _model)
     old, _active_chat = _active_chat, spare
     if old:
         old.close()
@@ -190,7 +222,7 @@ def new_chat():
 
 def _warm_standby():
     global _chat_standby
-    s = ClaudeSession(SYSTEM)
+    s = ClaudeSession(SYSTEM, _model)
     s.warm()
     with _session_lock:
         _chat_standby = s
@@ -202,7 +234,7 @@ def _warm_suggest(old):
     global _suggest_session
     if old:
         old.close()
-    s = ClaudeSession(COMMAND_SYSTEM)
+    s = ClaudeSession(COMMAND_SYSTEM, _model)
     s.warm()
     with _session_lock:
         _suggest_session = s
@@ -214,7 +246,8 @@ def _oneshot(prompt, system):
     if not claude:
         raise RuntimeError("`claude` CLI not found")
     proc = subprocess.run(
-        [claude, "-p", prompt, "--append-system-prompt", system, "--strict-mcp-config"],
+        [claude, "-p", prompt, "--append-system-prompt", system, "--strict-mcp-config",
+         "--model", _model],
         capture_output=True, text=True, timeout=120,
     )
     if proc.returncode != 0:
@@ -235,7 +268,7 @@ def query_api(messages, system):
     """The api backend: one Anthropic SDK call (no process; needs a key)."""
     import anthropic  # ImportError handled by caller
     client = anthropic.Anthropic()
-    resp = client.messages.create(model=MODEL, max_tokens=1024, system=system, messages=messages)
+    resp = client.messages.create(model=_model, max_tokens=1024, system=system, messages=messages)
     return "".join(b.text for b in resp.content if b.type == "text").strip()
 
 
@@ -311,6 +344,37 @@ def start_suggest():
     panel("💡 Suggest a command", "Describe what you want to do, then press Enter.", interactive=True)
 
 
+def start_model_picker():
+    global _mode
+    _mode = "model"
+    lines = ["Pick a model (number or name, Enter):", ""]
+    for i, (alias, mid) in enumerate(MODELS, 1):
+        mark = "  (current)" if mid == _model else ""
+        lines.append(f" {i}  {alias:7} {mid}{mark}")
+    panel("🤖 Pick a model", "\n".join(lines), interactive=True)
+
+
+def set_model(text):
+    """Switch the active model. Applies to the next conversation/suggest (the
+    in-flight chat keeps its model); re-warms the cli sessions in the background."""
+    global _model
+    _model = _resolve(text)
+    if choose_backend() == "cli" and shutil.which("claude"):
+        with _session_lock:
+            old_suggest = _suggest_session
+        threading.Thread(target=_warm_standby, daemon=True).start()
+        threading.Thread(target=_warm_suggest, args=(old_suggest,), daemon=True).start()
+    notify(f"model: {_model_alias(_model)}")
+
+
+def pick_model(text):
+    """Handle a model-picker submission: switch, reset mode, close the panel."""
+    global _mode
+    set_model(text)
+    _mode = "chat"
+    close_panel()
+
+
 def suggest_worker(request):
     """Translate NL -> command, paste it at the prompt, close the panel."""
     global _mode
@@ -353,10 +417,12 @@ def handle(msg):
                 "commands": [
                     {"id": "ai.explain", "title": "Explain last command"},
                     {"id": "ai.suggest", "title": "Suggest a command"},
+                    {"id": "ai.model", "title": "Choose AI model"},
                 ],
                 "keybindings": [
                     {"keys": "prefix i", "command": "ai.explain"},
                     {"keys": "prefix c", "command": "ai.suggest"},
+                    {"keys": "prefix m", "command": "ai.model"},
                 ],
                 "events": ["command_end"],
             },
@@ -371,6 +437,8 @@ def handle(msg):
             return
         if _mode == "suggest":
             threading.Thread(target=suggest_worker, args=(text,), daemon=True).start()
+        elif _mode == "model":
+            pick_model(text)
         else:
             start_followup(text)
     elif method == "command/invoke":
@@ -382,6 +450,8 @@ def handle(msg):
                 start_explain(_last)
         elif cmd == "ai.suggest":
             start_suggest()
+        elif cmd == "ai.model":
+            start_model_picker()
 
 
 def main():
