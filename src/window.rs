@@ -25,6 +25,7 @@ use crate::plugin::{Plugin, PluginId, PluginInbound, Registry};
 use crate::recall::Recall;
 use crate::render;
 use crate::selection::Selection;
+use crate::theme::Theme;
 
 /// Events delivered to the winit loop from background threads.
 #[derive(Debug)]
@@ -61,6 +62,8 @@ pub struct App {
     plugins: HashMap<PluginId, Plugin>,
     registry: Registry,
     font: Font,
+    /// The color theme (loaded once at startup).
+    theme: Theme,
     mods: ModifiersState,
     /// True after the Ctrl-A prefix, until the next (command) key.
     pending_prefix: bool,
@@ -92,6 +95,7 @@ impl App {
         shell: String,
         initial: Rect,
         plugins: HashMap<PluginId, Plugin>,
+        theme: Theme,
     ) -> anyhow::Result<Self> {
         let id: PaneId = 0;
         let first =
@@ -112,6 +116,7 @@ impl App {
             plugins,
             registry: Registry::default(),
             font,
+            theme,
             mods: ModifiersState::empty(),
             pending_prefix: false,
             overlay: None,
@@ -517,7 +522,7 @@ impl App {
             .unwrap();
 
         let mut buffer = surface.buffer_mut().unwrap();
-        buffer.fill(render::DIVIDER); // gaps between panes show through
+        buffer.fill(self.theme.ui.divider.packed()); // gaps between panes show through
         for (id, pane) in &self.panes {
             let rect = pane.rect();
             let focused = *id == self.focused;
@@ -532,21 +537,22 @@ impl App {
                 &mut self.font,
                 focused,
                 sel,
+                &self.theme,
             );
         }
         if self.panes.len() > 1 {
             if let Some(p) = self.panes.get(&self.focused) {
                 let rect = p.rect();
-                render::draw_border(&mut buffer, w as usize, h as usize, rect, render::FOCUS_BORDER, BORDER);
+                render::draw_border(&mut buffer, w as usize, h as usize, rect, self.theme.ui.focus_border.packed(), BORDER);
             }
         }
         // The recall overlay draws on top of everything.
         if let Some(overlay) = &self.overlay {
-            overlay.draw(&mut buffer, w as usize, h as usize, &mut self.font);
+            overlay.draw(&mut buffer, w as usize, h as usize, &mut self.font, &self.theme);
         }
         // A modal text panel (e.g. an AI answer) draws above the overlay.
         if let Some(panel) = &self.panel {
-            panel.draw(&mut buffer, w as usize, h as usize, &mut self.font);
+            panel.draw(&mut buffer, w as usize, h as usize, &mut self.font, &self.theme);
         }
         // A transient toast (from host/notify) along the bottom for a few
         // seconds. Multi-line answers (e.g. from the AI plugin) render as a

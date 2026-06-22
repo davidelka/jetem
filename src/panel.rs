@@ -6,21 +6,11 @@
 use crate::font::Font;
 use crate::pane::Rect;
 use crate::render;
+use crate::theme::Theme;
 
 const MAX_COLS: usize = 76;
 const MAX_ROWS: usize = 22;
 const PAD: usize = 10;
-
-const PANEL_BG: (u8, u8, u8) = (24, 26, 34);
-const TITLE: (u8, u8, u8) = (120, 180, 250);
-const TEXT: (u8, u8, u8) = (210, 210, 220);
-const HINT: (u8, u8, u8) = (120, 120, 135);
-const SEL_BG: (u8, u8, u8) = (50, 82, 122);
-const INPUT_FG: (u8, u8, u8) = (235, 235, 245);
-const HEADER_FG: (u8, u8, u8) = (150, 200, 255); // table header text
-const HEADER_BG: (u8, u8, u8) = (38, 44, 60); // table header band
-const STRIPE_BG: (u8, u8, u8) = (30, 33, 43); // zebra-stripe for odd body rows
-const BORDER: u32 = 0x00_5a_9c_e6;
 
 /// Cached geometry, computed the same way for drawing and hit-testing.
 struct Geo {
@@ -225,12 +215,13 @@ impl TextPanel {
 
     // --- drawing ----------------------------------------------------------
 
-    pub fn draw(&self, buf: &mut [u32], w: usize, h: usize, font: &mut Font) {
+    pub fn draw(&self, buf: &mut [u32], w: usize, h: usize, font: &mut Font, theme: &Theme) {
+        let p = &theme.panel;
         let g = self.geo(w, h, font);
-        render::fill(buf, w, h, g.rect, PANEL_BG);
-        render::draw_border(buf, w, h, g.rect, BORDER, 1);
+        render::fill(buf, w, h, g.rect, p.bg.rgb());
+        render::draw_border(buf, w, h, g.rect, p.border.packed(), 1);
 
-        render::draw_text(buf, w, h, font, g.content_x, g.rect.y + PAD, &self.title, TITLE, Some(PANEL_BG));
+        render::draw_text(buf, w, h, font, g.content_x, g.rect.y + PAD, &self.title, p.title.rgb(), Some(p.bg.rgb()));
 
         let table = self.table.is_some();
         for row in 0..g.rows {
@@ -245,29 +236,29 @@ impl TextPanel {
             if table {
                 let full = Rect::new(g.content_x, y, self.cols * g.cw, g.ch);
                 if line_idx == 0 {
-                    render::fill(buf, w, h, full, HEADER_BG);
+                    render::fill(buf, w, h, full, p.header_bg.rgb());
                 } else if line_idx % 2 == 0 {
-                    render::fill(buf, w, h, full, STRIPE_BG);
+                    render::fill(buf, w, h, full, p.stripe.rgb());
                 }
             }
             if let Some((c0, c1)) = self.sel_cols(line_idx, line.chars().count()) {
                 let hx = g.content_x + c0 * g.cw;
                 let hw = (c1 - c0) * g.cw;
-                render::fill(buf, w, h, Rect::new(hx, y, hw, g.ch), SEL_BG);
+                render::fill(buf, w, h, Rect::new(hx, y, hw, g.ch), p.sel.rgb());
             }
-            let fg = if table && line_idx == 0 { HEADER_FG } else { TEXT };
+            let fg = if table && line_idx == 0 { p.header_fg.rgb() } else { p.text.rgb() };
             render::draw_text(buf, w, h, font, g.content_x, y, line, fg, None);
         }
 
         let footer_y = g.rect.y + g.rect.h - PAD - g.ch;
         if self.interactive {
             let prompt = format!("> {}", self.input);
-            render::draw_text(buf, w, h, font, g.content_x, footer_y, &prompt, INPUT_FG, Some(PANEL_BG));
+            render::draw_text(buf, w, h, font, g.content_x, footer_y, &prompt, p.input.rgb(), Some(p.bg.rgb()));
         } else {
             render::draw_text(
                 buf, w, h, font, g.content_x, footer_y,
                 "drag to select · Ctrl-Shift-C copy · ↑/↓ scroll · Esc close",
-                HINT, Some(PANEL_BG),
+                p.hint.rgb(), Some(p.bg.rgb()),
             );
         }
     }

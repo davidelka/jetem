@@ -7,42 +7,17 @@ use crate::font::Font;
 use crate::grid::Grid;
 use crate::pane::Rect;
 use crate::selection::Selection;
-
-/// Background tint for selected cells.
-const SELECTION_BG: Rgb = (38, 64, 102);
+use crate::theme::Theme;
 
 type Rgb = (u8, u8, u8);
 
-/// Terminal defaults (a dark theme); these back `Color::Default`.
-const DEFAULT_FG: Rgb = (0xcc, 0xcc, 0xcc);
-const DEFAULT_BG: Rgb = (0x10, 0x12, 0x18);
-
-/// The classic 16 ANSI colors (VGA-ish palette), indices 0–15.
-const PALETTE: [Rgb; 16] = [
-    (0x00, 0x00, 0x00), // 0 black
-    (0xaa, 0x00, 0x00), // 1 red
-    (0x00, 0xaa, 0x00), // 2 green
-    (0xaa, 0x55, 0x00), // 3 yellow/brown
-    (0x00, 0x00, 0xaa), // 4 blue
-    (0xaa, 0x00, 0xaa), // 5 magenta
-    (0x00, 0xaa, 0xaa), // 6 cyan
-    (0xaa, 0xaa, 0xaa), // 7 white/grey
-    (0x55, 0x55, 0x55), // 8 bright black
-    (0xff, 0x55, 0x55), // 9 bright red
-    (0x55, 0xff, 0x55), // 10 bright green
-    (0xff, 0xff, 0x55), // 11 bright yellow
-    (0x55, 0x55, 0xff), // 12 bright blue
-    (0xff, 0x55, 0xff), // 13 bright magenta
-    (0x55, 0xff, 0xff), // 14 bright cyan
-    (0xff, 0xff, 0xff), // 15 bright white
-];
-
-/// Resolve a logical [`Color`] to concrete RGB.
-fn resolve(c: Color, default: Rgb) -> Rgb {
+/// Resolve a logical [`Color`] to concrete RGB, using the theme's palette for the
+/// 16 ANSI indices and `default` for `Color::Default`.
+fn resolve(c: Color, default: Rgb, palette: &[crate::theme::Col; 16]) -> Rgb {
     match c {
         Color::Default => default,
         Color::Rgb(r, g, b) => (r, g, b),
-        Color::Indexed(i) if (i as usize) < 16 => PALETTE[i as usize],
+        Color::Indexed(i) if (i as usize) < 16 => palette[i as usize].rgb(),
         Color::Indexed(i) => xterm_256(i),
     }
 }
@@ -79,6 +54,7 @@ fn blend(fg: Rgb, dst: u32, coverage: u8) -> u32 {
 /// Paint `grid` into the `rect` sub-region of `buf` (a `width * height`
 /// framebuffer). The caller clears any gaps between panes. `focused` gates the
 /// block cursor so only the active pane shows one.
+#[allow(clippy::too_many_arguments)]
 pub fn paint(
     buf: &mut [u32],
     width: usize,
@@ -88,11 +64,15 @@ pub fn paint(
     font: &mut Font,
     focused: bool,
     sel: Option<&Selection>,
+    theme: &Theme,
 ) {
     let (cw, ch_, base) = (font.cell_w, font.cell_h, font.baseline);
+    let fg_default = theme.terminal.fg.rgb();
+    let bg_default = theme.terminal.bg.rgb();
+    let palette = &theme.terminal.palette;
 
     // Clear this pane's background.
-    fill_rect(buf, width, height, rect.x, rect.y, rect.w, rect.h, pack(DEFAULT_BG));
+    fill_rect(buf, width, height, rect.x, rect.y, rect.w, rect.h, pack(bg_default));
 
     // The block cursor shows only on the focused pane's live screen (not while
     // scrolled into history) and only when the program hasn't hidden it.
@@ -102,14 +82,14 @@ pub fn paint(
         for col in 0..grid.cols {
             let cell = grid.visible_cell(row, col);
             let bold = cell.attrs & attr::BOLD != 0;
-            let mut fg = resolve(cell.fg, DEFAULT_FG);
-            let mut bg = resolve(cell.bg, DEFAULT_BG);
+            let mut fg = resolve(cell.fg, fg_default, palette);
+            let mut bg = resolve(cell.bg, bg_default, palette);
 
             // Bold + a base ANSI color (0–7) conventionally renders bright (8–15).
             if bold {
                 if let Color::Indexed(i) = cell.fg {
                     if i < 8 {
-                        fg = PALETTE[(i + 8) as usize];
+                        fg = palette[(i + 8) as usize].rgb();
                     }
                 }
             }
@@ -122,7 +102,7 @@ pub fn paint(
 
             // Selection tint overrides the background.
             if sel.is_some_and(|s| s.contains(row, col)) {
-                bg = SELECTION_BG;
+                bg = theme.terminal.selection.rgb();
             }
 
             let x0 = rect.x + col * cw;
@@ -135,10 +115,6 @@ pub fn paint(
         }
     }
 }
-
-/// Gap/divider color shown between panes, and the focused-pane border accent.
-pub const DIVIDER: u32 = 0x00_1a_1a_22;
-pub const FOCUS_BORDER: u32 = 0x00_5a_9c_e6;
 
 /// Draw a string at pixel (x, y) on `fg` over an optional `bg` fill. Returns the
 /// x just past the text. The reusable primitive for custom-drawn UI (overlays,

@@ -7,16 +7,10 @@ use crate::block::{load_history, Block};
 use crate::font::Font;
 use crate::pane::Rect;
 use crate::render;
+use crate::theme::Theme;
 
 const VISIBLE_ROWS: usize = 12;
 const MAX_COLS: usize = 70;
-
-// Overlay palette.
-const PANEL_BG: (u8, u8, u8) = (28, 28, 36);
-const TEXT: (u8, u8, u8) = (205, 205, 215);
-const DIM: (u8, u8, u8) = (120, 120, 135);
-const SEL_BG: (u8, u8, u8) = (90, 156, 230);
-const SEL_FG: (u8, u8, u8) = (16, 18, 24);
 
 pub struct Recall {
     /// History, most-recent-first and deduped by command.
@@ -105,7 +99,8 @@ impl Recall {
     }
 
     /// Draw the overlay centered near the top of the window.
-    pub fn draw(&self, buf: &mut [u32], w: usize, h: usize, font: &mut Font) {
+    pub fn draw(&self, buf: &mut [u32], w: usize, h: usize, font: &mut Font, theme: &Theme) {
+        let r = &theme.recall;
         let (cw, ch) = (font.cell_w, font.cell_h);
         let pad = 8;
         let cols = MAX_COLS.min((w / cw).saturating_sub(4)).max(10);
@@ -116,20 +111,20 @@ impl Recall {
         let py = h / 6;
         let panel = Rect::new(px, py, panel_w, panel_h);
 
-        render::fill(buf, w, h, panel, PANEL_BG);
-        render::draw_border(buf, w, h, panel, render::FOCUS_BORDER, 1);
+        render::fill(buf, w, h, panel, r.bg.rgb());
+        render::draw_border(buf, w, h, panel, theme.ui.focus_border.packed(), 1);
 
         let tx = px + pad;
         let mut ty = py + pad;
 
         // Query line.
         let prompt = format!("> {}", self.query);
-        render::draw_text(buf, w, h, font, tx, ty, &truncate(&prompt, cols), TEXT, Some(PANEL_BG));
+        render::draw_text(buf, w, h, font, tx, ty, &truncate(&prompt, cols), r.text.rgb(), Some(r.bg.rgb()));
         ty += ch;
 
         // Result rows.
         if self.results.is_empty() {
-            render::draw_text(buf, w, h, font, tx, ty, "(no matches)", DIM, Some(PANEL_BG));
+            render::draw_text(buf, w, h, font, tx, ty, "(no matches)", r.dim.rgb(), Some(r.bg.rgb()));
             return;
         }
         for k in 0..rows_shown {
@@ -139,9 +134,9 @@ impl Recall {
             }
             let block = &self.all[self.results[ridx]];
             let selected = ridx == self.selected;
-            let (fg, bg) = if selected { (SEL_FG, SEL_BG) } else { (TEXT, PANEL_BG) };
+            let (fg, bg) = if selected { (r.sel_fg.rgb(), r.sel_bg.rgb()) } else { (r.text.rgb(), r.bg.rgb()) };
             if selected {
-                render::fill(buf, w, h, Rect::new(px, ty, panel_w, ch), SEL_BG);
+                render::fill(buf, w, h, Rect::new(px, ty, panel_w, ch), r.sel_bg.rgb());
             }
             let line = truncate(&block.command, cols);
             render::draw_text(buf, w, h, font, tx, ty, &line, fg, Some(bg));

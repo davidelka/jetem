@@ -87,7 +87,8 @@ at **M8** (first time there's >1 region) — not earlier, to avoid a one-impleme
 | `grid.rs` | The screen model: cursor, deferred-wrap, erase, scroll, **scrollback + view offset**, cursor visibility. |
 | `parser.rs` | `vte::Perform` impl: escape codes → grid ops (cursor moves, SGR colors, erase, `?25` cursor show/hide). |
 | `font.rs` | fontdue load, cell metrics (`cell_w/cell_h/baseline`), cached glyph rasterization. |
-| `render.rs` | Software painter: ANSI palette + 256/truecolor resolve, alpha `blend`, glyph drawing, `draw_text`/`fill`/`draw_border` UI primitives. **Palette/colors hardcoded — extract a `Theme` when themes land.** |
+| `render.rs` | Software painter: 256/truecolor resolve (palette from the `Theme`), alpha `blend`, glyph drawing, `draw_text`/`fill`/`draw_border` UI primitives. |
+| `theme.rs` | `Theme` — all paint colors (terminal/ui/panel/recall) in one place; built-in default = the original look, overridable via `~/.config/jetem/theme.toml` (hex strings, partial). |
 | `screen.rs` | `Screen{primary, alt}` — the two buffers; alt-screen switching. |
 | `pane.rs` | `Rect` + `TerminalPane` (pty + screen + block tracker + reader thread); the Surface seam. |
 | `layout.rs` | Binary split tree (`Layout`/`SplitDir`): `compute_rects`/`split`/`remove`. |

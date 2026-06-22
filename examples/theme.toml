@@ -1,0 +1,40 @@
+# Sample theme. Copy to ~/.config/jetem/theme.toml and tweak.
+# Colors are hex strings ("#rrggbb"). Every section and key is OPTIONAL — anything
+# you omit keeps the built-in default, so you can override just a few colors.
+# (These values reproduce the default look; change them to retheme.)
+
+[terminal]
+fg = "#cccccc"
+bg = "#101218"
+selection = "#264066"
+# The 16 ANSI colors (indices 0–15): black, red, green, yellow, blue, magenta,
+# cyan, white, then their bright variants.
+palette = [
+  "#000000", "#aa0000", "#00aa00", "#aa5500",
+  "#0000aa", "#aa00aa", "#00aaaa", "#aaaaaa",
+  "#555555", "#ff5555", "#55ff55", "#ffff55",
+  "#5555ff", "#ff55ff", "#55ffff", "#ffffff",
+]
+
+[ui]
+divider = "#1a1a22"       # gaps between panes
+focus_border = "#5a9ce6"  # border around the focused pane
+
+[panel]
+bg = "#181a22"
+title = "#78b4fa"
+text = "#d2d2dc"
+hint = "#787887"
+sel = "#32527a"           # text-selection highlight in the panel
+input = "#ebebf5"         # the interactive input line
+border = "#5a9ce6"
+header_fg = "#96c8ff"     # table header text
+header_bg = "#262c3c"     # table header band
+stripe = "#1e212b"        # table zebra stripe
+
+[recall]
+bg = "#1c1c24"
+text = "#cdcdd7"
+dim = "#787887"           # the "(no matches)" hint
+sel_bg = "#5a9ce6"        # selected row background
+sel_fg = "#101218"        # selected row text

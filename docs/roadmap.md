@@ -90,6 +90,10 @@ The event-bus + registries layer is runtime-independent; that's the real design 
 - [ ] Themes & custom symbols
 
 ### Cross-cutting / later
-- Extract a `Theme` (palette/font currently hardcoded in render.rs)
+- [x] **M12 Extract a `Theme`** — all paint colors live in `src/theme.rs` (`Theme`),
+  built-in default = the original look, overridable via `~/.config/jetem/theme.toml`
+  (hex strings, partial override). Threaded through `render::paint`, the text panel,
+  and the recall overlay. Next: plugin-driven theming (`host/setTheme`), named presets,
+  font/glyph providers (the in-process tier).
 - Config file (TOML), copy/paste
 - Performance: GPU rendering (wgpu), glyph atlas, damage tracking

@@ -65,6 +65,10 @@ Plugins are opt-in. Copy [`examples/plugins.toml`](examples/plugins.toml) to
 `~/.config/jetem/plugins/`** and it loads automatically. The `ai.py` plugin needs the
 `claude` CLI (or `pip install anthropic` + `ANTHROPIC_API_KEY`).
 
+**Theming:** colors are configurable — copy [`examples/theme.toml`](examples/theme.toml)
+to `~/.config/jetem/theme.toml` and override any subset (hex strings; anything you omit
+keeps the default).
+
 ## Write a plugin in ~10 lines
 
 A plugin is any program that speaks newline-delimited JSON-RPC over stdio — no rebuild,

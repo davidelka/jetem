@@ -21,6 +21,7 @@ mod recall;
 mod render;
 mod screen;
 mod selection;
+mod theme;
 mod window;
 
 use std::collections::HashMap;
@@ -68,9 +69,12 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    // The color theme: built-in default, optionally overridden by theme.toml.
+    let theme = theme::Theme::load();
+
     // Start with one full-window pane; Ctrl-A splits create more.
     let rect = Rect::new(0, 0, COLS as usize * font.cell_w, ROWS as usize * font.cell_h);
-    let mut app = App::new(font, proxy, shell, rect, plugins)?;
+    let mut app = App::new(font, proxy, shell, rect, plugins, theme)?;
     event_loop.run_app(&mut app)?;
     Ok(())
 }
