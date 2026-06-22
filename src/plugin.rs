@@ -18,6 +18,10 @@ use crate::window::UserEvent;
 
 pub type PluginId = usize;
 
+/// The JSON-RPC plugin protocol version the host speaks. Sent in `initialize`;
+/// plugins may echo it back in their manifest so the host can warn on a mismatch.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 // --- protocol (what a plugin declares in its initialize response) -----------
 
 #[derive(Debug, Default, Deserialize, PartialEq)]
@@ -30,6 +34,10 @@ pub struct Manifest {
     pub keybindings: Vec<KeyBinding>,
     #[serde(default)]
     pub events: Vec<String>,
+    /// The protocol version the plugin was written against (optional). The host
+    /// warns if it doesn't match [`PROTOCOL_VERSION`].
+    #[serde(default, rename = "protocolVersion")]
+    pub protocol_version: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -178,9 +186,11 @@ impl Plugin {
         let _ = self.tx.send(msg.to_string());
     }
 
-    /// Handshake: ask the plugin to register itself.
+    /// Handshake: ask the plugin to register itself, advertising our protocol
+    /// version so the plugin can adapt (or refuse) if it speaks a different one.
     pub fn initialize(&self) {
-        self.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"host":"terminal"}}));
+        self.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize",
+            "params":{"host":"terminal","protocolVersion":PROTOCOL_VERSION}}));
     }
 
     /// Tell the plugin one of its commands fired.
@@ -254,6 +264,7 @@ mod tests {
                 command: "split".into(),
             }],
             events: vec![],
+            protocol_version: None,
         };
         let mut reg = Registry::default();
         reg.apply_manifest(3, &m);

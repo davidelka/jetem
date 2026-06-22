@@ -22,10 +22,13 @@ import json
 import sys
 import threading
 
+PROTOCOL_VERSION = 1  # the protocol version this SDK targets
+
 
 class Plugin:
     def __init__(self, name):
         self.name = name
+        self.host_protocol_version = None  # filled in from the initialize handshake
         self._commands = {}     # id -> callable()
         self._titles = {}       # id -> title
         self._keybindings = []  # [{"keys", "command"}]
@@ -64,6 +67,11 @@ class Plugin:
     def notify(self, text):
         self._send("host/notify", {"text": text})
 
+    def log(self, text, level="info"):
+        """Write a line to the host's log (the terminal's stderr), prefixed with
+        this plugin's name and `level`. For debugging, not user-facing."""
+        self._send("host/log", {"text": text, "level": level})
+
     def show_panel(self, title, body, interactive=False):
         self._send("host/showPanel", {"title": title, "body": body, "input": interactive})
 
@@ -91,6 +99,7 @@ class Plugin:
     def _manifest(self):
         return {
             "name": self.name,
+            "protocolVersion": PROTOCOL_VERSION,
             "commands": [{"id": cid, "title": self._titles[cid]} for cid in self._commands],
             "keybindings": self._keybindings,
             "events": list(self._events),
@@ -117,6 +126,7 @@ class Plugin:
                 continue
             method = msg.get("method")
             if method == "initialize":
+                self.host_protocol_version = msg.get("params", {}).get("protocolVersion")
                 self._reply(msg.get("id"), self._manifest())
             elif method == "command/invoke":
                 fn = self._commands.get(msg.get("params", {}).get("command"))

@@ -133,7 +133,7 @@ exits.
 
 | Method | When | Params | You should |
 |---|---|---|---|
-| `initialize` | once, at startup | `{"host":"terminal"}` | reply with your [manifest](#manifest) (a `result`, echoing the request `id`) |
+| `initialize` | once, at startup | `{"host":"terminal","protocolVersion":1}` | reply with your [manifest](#manifest) (a `result`, echoing the request `id`) |
 | `command/invoke` | a keybinding or command you registered fired | `{"command":"<your command id>"}` | do the thing (this is a notification — no reply expected) |
 | `event/<name>` | an [event](#events) you subscribed to occurred | event-specific (see below) | react (notification — no reply expected) |
 | a `result` with `{"ok":bool}` | reply to a [host action](#host-actions) you sent | — | optional to read; most plugins ignore it |
@@ -148,6 +148,7 @@ everything you register. All fields are optional.
 ```jsonc
 {
   "name": "hello",                 // display name for your plugin
+  "protocolVersion": 1,            // protocol you target (optional; host warns on mismatch)
   "commands": [                    // named actions you can perform
     { "id": "hello.hi", "title": "Say hi" }
   ],
@@ -160,7 +161,8 @@ everything you register. All fields are optional.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `name` | string | Your plugin's display name. |
+| `name` | string | Your plugin's display name (also prefixes your [`host/log`](#host-actions) output). |
+| `protocolVersion` | int | The protocol version you were written against (optional). The host advertises its own version in the `initialize` params, and warns to stderr if yours differs. |
 | `commands[].id` | string | Unique command id. Namespacing it (`hello.hi`) avoids clashes with other plugins — command ids are global. |
 | `commands[].title` | string | Human-readable label (optional). |
 | `keybindings[].keys` | string | A [chord](#keybindings--chords) that triggers the command. |
@@ -179,6 +181,7 @@ can ignore). Unknown actions reply `{"ok":false}`.
 | Action | Params | Effect |
 |---|---|---|
 | `host/notify` | `{"text": string}` | Show a transient toast along the bottom (multi-line text is supported). |
+| `host/log` | `{"text": string, "level"?: string}` | Write a line to the host's log (the terminal's stderr), prefixed `[<your name>/<level>]`. For debugging, not user-facing. `level` defaults to `"info"`. |
 | `host/showPanel` | `{"title": string, "body": string, "input": bool}` | Open a modal scrollable text panel. With `"input": true` it's interactive: the user can type a line and press Enter, which is delivered back to you as the [`panelInput`](#events) event. |
 | `host/closePanel` | `{}` | Close the panel. |
 | `host/showTable` | `{"title": string, "headers": [string], "rows": [[any]]}` | Open a modal table panel: a header band over aligned, zebra-striped rows. Cell values that aren't strings are stringified; columns are sized to content and truncated with `…` to fit. Read-only; `Ctrl-Shift-C` copies the whole table as TSV. |
@@ -297,12 +300,12 @@ streaming results into an interactive panel), read the bundled
 
 Honest about where the contract is today:
 
-- **No protocol version yet.** `initialize` sends `{"host":"terminal"}` with no
-  version field. The message shapes here can still change; pin to a terminal commit
-  if you need stability.
-- **Errors surface only on stderr.** If your plugin crashes or misbehaves, the host
-  removes it silently; the only trace is whatever you printed to stderr (visible in
-  the launching console). There is no in-app error surface or `host/log` yet.
+- **Protocol version is 1, but young.** `initialize` advertises `protocolVersion: 1`
+  and the host warns on a manifest mismatch, but v1's message shapes can still
+  change. Pin to a terminal commit if you need stability.
+- **Crashes are silent; logs are out-of-band.** Use [`host/log`](#host-actions) (or
+  your own stderr) to debug — both land in the terminal's launching console. If your
+  plugin crashes, the host removes it without an in-app error surface.
 - **Manual enablement.** Plugins are added by editing `plugins.toml` by hand; there
   is no install command or drop-in plugin directory yet.
 - **Fixed capability surface.** You can only do what the [host actions](#host-actions)

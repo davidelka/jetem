@@ -362,7 +362,22 @@ impl App {
         msg: PluginInbound,
     ) {
         match msg {
-            PluginInbound::Manifest(m) => self.registry.apply_manifest(id, &m),
+            PluginInbound::Manifest(m) => {
+                if let Some(pv) = m.protocol_version {
+                    if pv != crate::plugin::PROTOCOL_VERSION {
+                        eprintln!(
+                            "[terminal] plugin '{}' targets protocol v{pv}, host speaks v{} — may misbehave",
+                            m.name,
+                            crate::plugin::PROTOCOL_VERSION
+                        );
+                    }
+                }
+                // Record the plugin's name (used to prefix its host/log output).
+                if let Some(p) = self.plugins.get_mut(&id) {
+                    p.name = m.name.clone();
+                }
+                self.registry.apply_manifest(id, &m);
+            }
             PluginInbound::HostAction {
                 id: req_id,
                 method,
@@ -430,6 +445,20 @@ impl App {
                     if let Some(p) = self.panes.get_mut(&self.focused) {
                         p.write_input(text.as_bytes());
                     }
+                    return true;
+                }
+                false
+            }
+            "host/log" => {
+                if let Some(text) = params.get("text").and_then(|t| t.as_str()) {
+                    let level = params.get("level").and_then(|l| l.as_str()).unwrap_or("info");
+                    let name = self
+                        .plugins
+                        .get(&plugin_id)
+                        .map(|p| p.name.as_str())
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or("plugin");
+                    eprintln!("[{name}/{level}] {text}");
                     return true;
                 }
                 false
