@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""terminal_plugin — a tiny SDK for writing `terminal` plugins in Python.
+"""jetem_plugin — a tiny SDK for writing `jetem` plugins in Python.
 
 Hides the JSON-RPC-over-stdio plumbing described in docs/plugin-api.md. Register
 commands and event handlers, then call .run():
 
-    from terminal_plugin import Plugin
+    from jetem_plugin import Plugin
 
     plug = Plugin("hello")
 

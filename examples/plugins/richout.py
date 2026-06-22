@@ -6,7 +6,7 @@ A "block renderer": it watches `command_end`, keeps the last block's output,
 classifies it (JSON object/array, or whitespace-aligned columns), and asks the
 host to draw a table via `host/showTable` — or a text panel for nested JSON.
 Detection/parsing is *policy* and lives here; the table-drawing primitive lives
-in core. Built on the terminal_plugin SDK.
+in core. Built on the jetem_plugin SDK.
 
 Enable via ~/.config/jetem/plugins.toml:
     [[plugin]]
@@ -19,7 +19,7 @@ import sys
 
 # Make the SDK importable whether run from the repo or elsewhere.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "sdk"))
-from terminal_plugin import Plugin  # noqa: E402
+from jetem_plugin import Plugin  # noqa: E402
 
 MAX_ROWS = 200  # cap so a huge output can't build an enormous table
 

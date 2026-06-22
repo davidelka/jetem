@@ -5,7 +5,7 @@ Press Ctrl-A i to ask Claude about the most recent command. The answer opens in
 a panel; type a follow-up there and press Enter to continue the conversation.
 Ctrl-A c translates a natural-language request into a shell command.
 
-Two backends (set TERMINAL_AI_BACKEND=cli|api to force one):
+Two backends (set JETEM_AI_BACKEND=cli|api to force one):
   - "cli": drives the `claude` CLI — uses your Claude subscription, no key. To
     avoid paying process startup (~7s) on every question, the cli backend keeps a
     **persistent** `claude` process alive in stream-json mode and pre-warms it at
@@ -84,7 +84,7 @@ def show_panel(thinking=False):
 # --- backends ---------------------------------------------------------------
 
 def choose_backend():
-    forced = os.environ.get("TERMINAL_AI_BACKEND")
+    forced = os.environ.get("JETEM_AI_BACKEND")
     if forced in ("cli", "api"):
         return forced
     if os.environ.get("ANTHROPIC_API_KEY"):
@@ -266,7 +266,7 @@ def run_turn():
         else:
             answer = query_api(_convo, SYSTEM)
     except ImportError:
-        answer = "(error: `pip install anthropic`, or set TERMINAL_AI_BACKEND=cli)"
+        answer = "(error: `pip install anthropic`, or set JETEM_AI_BACKEND=cli)"
     except Exception as e:
         answer = f"(error: {str(e).splitlines()[0][:160]})"
     with _state_lock:

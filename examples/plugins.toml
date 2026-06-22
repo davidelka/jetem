@@ -11,14 +11,14 @@ command = "python3 /home/david/projects/jetem/examples/plugins/mux.py"
 command = "python3 /home/david/projects/jetem/examples/plugins/oops.py"
 
 # AI assistant: Ctrl-A i explains the last command via Claude.
-# Backend (TERMINAL_AI_BACKEND): "cli" uses your Claude subscription via the
+# Backend (JETEM_AI_BACKEND): "cli" uses your Claude subscription via the
 # `claude` CLI (no key); "api" uses the anthropic SDK (`pip install anthropic`
 # + ANTHROPIC_API_KEY). Default: api if a key is set, else the claude CLI.
 # [[plugin]]
 # command = "python3 /home/david/projects/jetem/examples/plugins/ai.py"
 
 # Rich output: Ctrl-A t renders the last command's output (JSON or aligned
-# columns) as a table. Built on the terminal_plugin SDK (sdk/terminal_plugin.py).
+# columns) as a table. Built on the jetem_plugin SDK (sdk/jetem_plugin.py).
 # [[plugin]]
 # command = "python3 /home/david/projects/jetem/examples/plugins/richout.py"
 
