@@ -96,7 +96,7 @@ at **M8** (first time there's >1 region) — not earlier, to avoid a one-impleme
 | `panel.rs` | `TextPanel` — modal scrollable panel: wrapped text (`host/showPanel`) **or** an aligned, zebra-striped table (`host/showTable`); mark/copy, TSV copy for tables. |
 | `selection.rs` | Mouse text selection + extraction. |
 | `plugin.rs` | **Plugin host**: JSON-RPC transport, `Registry` (chord→command→plugin), `Plugin` process. |
-| `config.rs` | Reads `~/.config/terminal/plugins.toml`. |
+| `config.rs` | Plugin sources: `~/.config/terminal/plugins.toml` (explicit commands) **+** drop-in dir `~/.config/terminal/plugins/` (executable→shebang, else `.py`/`.js`/`.sh`→interpreter). |
 | `window.rs` | winit `App`: compositor over panes, input/keys, prefix dispatch, host actions, toast, redraw. |
 
 Crates: `portable-pty`, `vte`, `winit` 0.30, `softbuffer` 0.4, `fontdue`, `serde`/`serde_json`, `toml`, `arboard`, `anyhow`.

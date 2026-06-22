@@ -264,8 +264,29 @@ command = "node /abs/path/to/other-plugin.js"
 
 `command` is split on whitespace into a program and its arguments. There is no
 shell expansion — use absolute paths, and pass configuration via the arguments or
-the environment (e.g. wrap with `env FOO=bar python3 …`). Nothing runs unless it's
-listed here; changes take effect on the next terminal launch.
+the environment (e.g. wrap with `env FOO=bar python3 …`). Changes take effect on
+the next terminal launch.
+
+### Drop-in directory
+
+For simple plugins you don't even need to touch the TOML: **every file in
+`~/.config/terminal/plugins/` loads automatically.** Dropping the file is the
+opt-in.
+
+How a bare file is launched:
+
+- If the file is **executable** (`chmod +x`), it's run directly — its shebang
+  (`#!/usr/bin/env python3`, `#!/usr/bin/env node`, …) chooses the interpreter.
+  This is the recommended, language-agnostic way.
+- Otherwise a known **extension** maps to an interpreter: `.py`→`python3`,
+  `.js`→`node`, `.sh`→`sh`.
+- Anything else (unknown extension, not executable) is skipped with a note on the
+  terminal's stderr.
+
+Hidden files (starting with `.`) are ignored, and a file already referenced by a
+TOML `command` won't load twice. Use the TOML form when a plugin needs arguments
+or environment variables (the drop-in form can't express those); use drop-in for
+everything else.
 
 ## A second example: a `command_end` reactor
 
@@ -306,8 +327,9 @@ Honest about where the contract is today:
 - **Crashes are silent; logs are out-of-band.** Use [`host/log`](#host-actions) (or
   your own stderr) to debug — both land in the terminal's launching console. If your
   plugin crashes, the host removes it without an in-app error surface.
-- **Manual enablement.** Plugins are added by editing `plugins.toml` by hand; there
-  is no install command or drop-in plugin directory yet.
+- **No install command yet.** Plugins are enabled by a TOML entry or by dropping a
+  file into `~/.config/terminal/plugins/` — there's no package/registry install
+  flow, and changes apply on the next launch (no hot reload).
 - **Fixed capability surface.** You can only do what the [host actions](#host-actions)
   and [events](#events) tables list. New capabilities require a (small) core change
   that adds a `host/*` action or an event — propose one if you hit a wall.
