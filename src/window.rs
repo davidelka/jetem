@@ -453,6 +453,22 @@ impl App {
                 self.panel = Some(TextPanel::new(title, body, cols, interactive, plugin_id));
                 true
             }
+            "host/showTable" => {
+                let title = params
+                    .get("title")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let headers = json_str_row(params.get("headers"));
+                let rows = params
+                    .get("rows")
+                    .and_then(|r| r.as_array())
+                    .map(|a| a.iter().map(|row| json_str_row(Some(row))).collect())
+                    .unwrap_or_default();
+                let cols = self.win_w as usize / self.font.cell_w.max(1);
+                self.panel = Some(TextPanel::new_table(title, headers, rows, cols, plugin_id));
+                true
+            }
             "host/closePanel" => {
                 self.panel = None;
                 true
@@ -847,6 +863,22 @@ fn chord_string(event: &KeyEvent) -> Option<String> {
         Key::Named(NamedKey::ArrowRight) => Some("prefix right".into()),
         _ => None,
     }
+}
+
+/// Coerce a JSON array (the `headers`, or one `rows` entry) into `Vec<String>`:
+/// strings pass through, numbers/bools stringify, null becomes empty.
+fn json_str_row(v: Option<&Value>) -> Vec<String> {
+    v.and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(|c| match c {
+                    Value::String(s) => s.clone(),
+                    Value::Null => String::new(),
+                    other => other.to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Ctrl-A is the multiplexer prefix (like tmux's Ctrl-B).

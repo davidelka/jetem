@@ -79,7 +79,13 @@ The event-bus + registries layer is runtime-independent; that's the real design 
   Claude (`claude-opus-4-8`), shown as a multi-line toast. Subscribes to `command_end`,
   invokes asynchronously. Two backends (`TERMINAL_AI_BACKEND`): **cli** (Claude
   subscription via the `claude` CLI, no key) or **api** (`anthropic` SDK + key).
-- [ ] Rich / structured output renderers (tables, images, foldable)
+- [~] **M11 Rich / structured output renderers** — *tables done*: `host/showTable` +
+  `TextPanel` table mode (core primitive: aligned, zebra-striped, TSV copy), driven by
+  `examples/plugins/richout.py` (`Ctrl-A t` — detects JSON or whitespace-aligned columns;
+  detection/parsing is plugin policy). The plugin contract is now published
+  (`docs/plugin-api.md`) with a Python SDK (`sdk/terminal_plugin.py`), so anyone can write
+  a renderer without touching core. Deferred: images (sixel/kitty), foldable JSON trees,
+  inline-in-scrollback rendering (a larger render-model change).
 - [ ] Custom-draw panels / widgets (needs in-process tier)
 - [ ] Themes & custom symbols
 

@@ -93,7 +93,7 @@ at **M8** (first time there's >1 region) — not earlier, to avoid a one-impleme
 | `layout.rs` | Binary split tree (`Layout`/`SplitDir`): `compute_rects`/`split`/`remove`. |
 | `block.rs` | OSC 133 command blocks + JSONL history (`BlockTracker`); base64 command decode. |
 | `recall.rs` | `Ctrl-A r` recall overlay (searchable history). |
-| `panel.rs` | `TextPanel` — modal scrollable text panel (AI answers via `host/showPanel`). |
+| `panel.rs` | `TextPanel` — modal scrollable panel: wrapped text (`host/showPanel`) **or** an aligned, zebra-striped table (`host/showTable`); mark/copy, TSV copy for tables. |
 | `selection.rs` | Mouse text selection + extraction. |
 | `plugin.rs` | **Plugin host**: JSON-RPC transport, `Registry` (chord→command→plugin), `Plugin` process. |
 | `config.rs` | Reads `~/.config/terminal/plugins.toml`. |
@@ -104,10 +104,13 @@ Initial **80×24** (resizable); font path hardcoded to DejaVu Sans Mono; display
 
 **Multiplexing is a plugin** (`examples/plugins/mux.py`) — core no longer hardcodes the split/focus/close keys. Plugins are opt-in via `plugins.toml`; the zsh integration auto-injects (no manual source).
 
+**Writing plugins** (third-party-ready): the out-of-process protocol is fully specced in `docs/plugin-api.md` (handshake, manifest, host-action + event catalogs, chord grammar, hello-world). A Python SDK (`sdk/terminal_plugin.py`) hides the JSON-RPC plumbing — `@plug.command`/`@plug.on_event` + host-action methods. `examples/plugins/richout.py` (rich output) is built on it.
+
 ## Milestones
 
 Done: **M1–M10** — engine, resize, alt-screen, multiplexing, command blocks + recall, and the plugin host (out-of-process JSON-RPC; multiplexing dogfooded as a plugin). **AI assistant** plugin (`examples/plugins/ai.py`): `Ctrl-A i` explains the last command via Claude (`claude-opus-4-8`) — needs `pip install anthropic` + `ANTHROPIC_API_KEY`. When touching Claude/API code, follow the `claude-api` skill.
-Next: rich/structured output renderers, themes (`Theme` extraction), in-process plugin tier (WASM/Rhai), a multi-line panel host action for long AI answers. See `docs/roadmap.md`.
+**M11 (started): rich/structured output renderers.** First renderer is **tables**: `host/showTable` + the `TextPanel` table mode (core rendering primitive) driven by `richout.py` (`Ctrl-A t` — detects JSON / aligned columns; *policy* in the plugin). Deferred: images (sixel/kitty), foldable JSON trees, inline-in-scrollback rendering.
+Next: themes (`Theme` extraction), in-process plugin tier (WASM/Rhai). See `docs/roadmap.md`.
 
 ## Working conventions
 

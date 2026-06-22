@@ -17,6 +17,9 @@ const TEXT: (u8, u8, u8) = (210, 210, 220);
 const HINT: (u8, u8, u8) = (120, 120, 135);
 const SEL_BG: (u8, u8, u8) = (50, 82, 122);
 const INPUT_FG: (u8, u8, u8) = (235, 235, 245);
+const HEADER_FG: (u8, u8, u8) = (150, 200, 255); // table header text
+const HEADER_BG: (u8, u8, u8) = (38, 44, 60); // table header band
+const STRIPE_BG: (u8, u8, u8) = (30, 33, 43); // zebra-stripe for odd body rows
 const BORDER: u32 = 0x00_5a_9c_e6;
 
 /// Cached geometry, computed the same way for drawing and hit-testing.
@@ -41,6 +44,15 @@ pub struct TextPanel {
     pub interactive: bool,
     pub owner: usize, // PluginId that opened the panel
     input: String,
+    // when set, the panel renders as a table (header band + zebra rows); the raw
+    // data is kept for TSV copy. `lines` holds the rendered, fixed-width rows.
+    table: Option<TableMeta>,
+}
+
+/// Raw table data, kept for TSV copy and header/zebra styling in `draw`.
+struct TableMeta {
+    headers: Vec<String>,
+    rows: Vec<Vec<String>>,
 }
 
 impl TextPanel {
@@ -56,6 +68,34 @@ impl TextPanel {
             interactive,
             owner,
             input: String::new(),
+            table: None,
+        }
+    }
+
+    /// Build a panel that renders a table: a header row (accent band) over
+    /// aligned, zebra-striped body rows. Read-only (non-interactive). Columns are
+    /// sized to their widest cell, then shrunk widest-first and truncated with `…`
+    /// to fit `max_cols`.
+    pub fn new_table(
+        title: String,
+        headers: Vec<String>,
+        rows: Vec<Vec<String>>,
+        max_cols: usize,
+        owner: usize,
+    ) -> Self {
+        let cap = MAX_COLS.min(max_cols.max(10));
+        let (lines, width) = render_table(&headers, &rows, cap);
+        Self {
+            title,
+            lines,
+            scroll: 0,
+            cols: width.max(10),
+            anchor: None,
+            head: (0, 0),
+            interactive: false,
+            owner,
+            input: String::new(),
+            table: Some(TableMeta { headers, rows }),
         }
     }
 
@@ -157,7 +197,18 @@ impl TextPanel {
                 }
                 out
             }
-            _ => self.lines.join("\n"),
+            // No selection: a table copies as TSV; plain text copies its lines.
+            _ => match &self.table {
+                Some(t) => {
+                    let mut out = t.headers.join("\t");
+                    for r in &t.rows {
+                        out.push('\n');
+                        out.push_str(&r.join("\t"));
+                    }
+                    out
+                }
+                None => self.lines.join("\n"),
+            },
         }
     }
 
@@ -181,6 +232,7 @@ impl TextPanel {
 
         render::draw_text(buf, w, h, font, g.content_x, g.rect.y + PAD, &self.title, TITLE, Some(PANEL_BG));
 
+        let table = self.table.is_some();
         for row in 0..g.rows {
             let line_idx = self.scroll + row;
             if line_idx >= self.lines.len() {
@@ -188,12 +240,23 @@ impl TextPanel {
             }
             let line = &self.lines[line_idx];
             let y = g.content_y + row * g.ch;
+            // Table styling: the header row (line 0) gets an accent band; even
+            // body rows get a subtle zebra stripe.
+            if table {
+                let full = Rect::new(g.content_x, y, self.cols * g.cw, g.ch);
+                if line_idx == 0 {
+                    render::fill(buf, w, h, full, HEADER_BG);
+                } else if line_idx % 2 == 0 {
+                    render::fill(buf, w, h, full, STRIPE_BG);
+                }
+            }
             if let Some((c0, c1)) = self.sel_cols(line_idx, line.chars().count()) {
                 let hx = g.content_x + c0 * g.cw;
                 let hw = (c1 - c0) * g.cw;
                 render::fill(buf, w, h, Rect::new(hx, y, hw, g.ch), SEL_BG);
             }
-            render::draw_text(buf, w, h, font, g.content_x, y, line, TEXT, None);
+            let fg = if table && line_idx == 0 { HEADER_FG } else { TEXT };
+            render::draw_text(buf, w, h, font, g.content_x, y, line, fg, None);
         }
 
         let footer_y = g.rect.y + g.rect.h - PAD - g.ch;
@@ -237,6 +300,80 @@ fn wrap(body: &str, cols: usize) -> Vec<String> {
     out
 }
 
+/// Render a table to fixed-width display lines (header first, then rows) and
+/// return them with the total table width in columns. Columns are sized to the
+/// widest cell, then shrunk widest-first and truncated with `…` to fit `cols`.
+fn render_table(headers: &[String], rows: &[Vec<String>], cols: usize) -> (Vec<String>, usize) {
+    const SEP: usize = 2; // spaces between columns
+    const MINW: usize = 3; // never shrink a column below this
+    let ncols = headers
+        .len()
+        .max(rows.iter().map(Vec::len).max().unwrap_or(0))
+        .max(1);
+
+    let mut widths = vec![0usize; ncols];
+    for (i, h) in headers.iter().enumerate() {
+        widths[i] = widths[i].max(h.chars().count());
+    }
+    for r in rows {
+        for (i, c) in r.iter().enumerate() {
+            if i < ncols {
+                widths[i] = widths[i].max(c.chars().count());
+            }
+        }
+    }
+
+    // Shrink the widest column until the table fits the budget.
+    let sep_total = SEP * (ncols - 1);
+    let budget = cols.saturating_sub(sep_total).max(ncols * MINW);
+    while widths.iter().sum::<usize>() > budget {
+        let mi = widths
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, w)| **w)
+            .map(|(i, _)| i)
+            .unwrap();
+        if widths[mi] <= MINW {
+            break;
+        }
+        widths[mi] -= 1;
+    }
+
+    let fmt = |cells: &[String]| -> String {
+        let mut s = String::new();
+        for i in 0..ncols {
+            if i > 0 {
+                s.push_str("  ");
+            }
+            s.push_str(&pad_trunc(cells.get(i).map(String::as_str).unwrap_or(""), widths[i]));
+        }
+        s
+    };
+    let mut lines = Vec::with_capacity(rows.len() + 1);
+    lines.push(fmt(headers));
+    for r in rows {
+        lines.push(fmt(r));
+    }
+    (lines, widths.iter().sum::<usize>() + sep_total)
+}
+
+/// Left-justify `s` to `w` columns, truncating with a trailing `…` if too long.
+fn pad_trunc(s: &str, w: usize) -> String {
+    let n = s.chars().count();
+    if n > w {
+        if w == 0 {
+            return String::new();
+        }
+        let mut t: String = s.chars().take(w - 1).collect();
+        t.push('…');
+        t
+    } else {
+        let mut t = String::from(s);
+        t.extend(std::iter::repeat(' ').take(w - n));
+        t
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,5 +412,41 @@ mod tests {
         p.begin_select((0, 1));
         p.extend_select((2, 2));
         assert_eq!(p.copy_text(), "oo\nbar\nba");
+    }
+
+    #[test]
+    fn table_renders_header_then_rows() {
+        let p = TextPanel::new_table(
+            "t".into(),
+            vec!["NAME".into(), "AGE".into()],
+            vec![
+                vec!["alice".into(), "30".into()],
+                vec!["bob".into(), "7".into()],
+            ],
+            80,
+            0,
+        );
+        assert_eq!(p.lines.len(), 3); // header + 2 rows
+        assert!(p.lines[0].starts_with("NAME"));
+        assert!(p.lines[1].starts_with("alice"));
+    }
+
+    #[test]
+    fn table_copies_as_tsv() {
+        let p = TextPanel::new_table(
+            "t".into(),
+            vec!["a".into(), "b".into()],
+            vec![vec!["1".into(), "2".into()]],
+            80,
+            0,
+        );
+        assert_eq!(p.copy_text(), "a\tb\n1\t2");
+    }
+
+    #[test]
+    fn table_truncates_overlong_cell() {
+        let (lines, _w) = render_table(&["h".to_string()], &[vec!["abcdefghij".to_string()]], 5);
+        assert_eq!(lines[1].chars().count(), 5);
+        assert!(lines[1].ends_with('…'));
     }
 }

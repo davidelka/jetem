@@ -17,6 +17,11 @@ command = "python3 /home/david/projects/terminal/examples/plugins/oops.py"
 # [[plugin]]
 # command = "python3 /home/david/projects/terminal/examples/plugins/ai.py"
 
+# Rich output: Ctrl-A t renders the last command's output (JSON or aligned
+# columns) as a table. Built on the terminal_plugin SDK (sdk/terminal_plugin.py).
+# [[plugin]]
+# command = "python3 /home/david/projects/terminal/examples/plugins/richout.py"
+
 # Minimal demo: Ctrl-A g -> split. (Redundant with mux; here as a tiny example.)
 # [[plugin]]
 # command = "python3 /home/david/projects/terminal/examples/plugins/hello.py"
