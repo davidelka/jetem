@@ -96,7 +96,9 @@ def query(messages, system=SYSTEM):
             prompt += f"{who}: {m['content']}\n\n"
         prompt += "Assistant:"
         proc = subprocess.run(
-            [claude, "-p", prompt, "--append-system-prompt", system],
+            # --strict-mcp-config skips loading the user's MCP servers, which
+            # otherwise dominate startup (~33s -> ~9s). We don't need them here.
+            [claude, "-p", prompt, "--append-system-prompt", system, "--strict-mcp-config"],
             capture_output=True, text=True, timeout=120,
         )
         if proc.returncode != 0:
