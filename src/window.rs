@@ -521,6 +521,22 @@ impl App {
                 self.panel = None;
                 true
             }
+            "host/setTheme" => {
+                // Runtime, in-memory theme change (not persisted). A `preset` swaps
+                // the whole theme; a `patch` deep-merges a partial onto the current
+                // one. The event-loop requests a redraw after every host action, so
+                // the new colors take effect on the next paint without a restart.
+                if let Some(name) = params.get("preset").and_then(|p| p.as_str()) {
+                    match Theme::preset(name) {
+                        Some(t) => self.theme = t,
+                        None => eprintln!("[host/setTheme] unknown preset {name:?}"),
+                    }
+                }
+                if let Some(patch) = params.get("patch") {
+                    self.theme = self.theme.patched(patch);
+                }
+                true
+            }
             _ => false, // unknown action
         }
     }

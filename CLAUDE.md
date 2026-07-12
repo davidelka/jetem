@@ -110,14 +110,24 @@ Initial **80×24** (resizable); font path hardcoded to DejaVu Sans Mono; display
 
 **Writing plugins** (third-party-ready): the out-of-process protocol is fully specced in `docs/plugin-api.md` (handshake, manifest, host-action + event catalogs, chord grammar, hello-world). A Python SDK (`sdk/jetem_plugin.py`) hides the JSON-RPC plumbing — `@plug.command`/`@plug.on_event` + host-action methods. `examples/plugins/richout.py` (rich output) is built on it.
 
+## Keybindings (cheat sheet)
+
+Prefix = **`Ctrl-A`** (tmux-style), then a command key. Core owns only `r`/`a`; the rest are plugin-registered (opt-in via `plugins.toml`). Full table (incl. overlay/panel keys) lives in `README.md`.
+
+- **Prefix chords** — core: `r` recall, `a` literal Ctrl-A. `mux.py`: `|`/`v` `-`/`s` split, `h`/`j`/`k`/`l` (or arrows) focus, `x` close. `ai.py`: `i` explain, `c` suggest, `m` model. `richout.py`: `t` render table/tree. `theme.py`: `y` cycle theme, `p` toggle accent.
+- **Global (no prefix)** — `Ctrl-Shift-C` copy · `Ctrl-Shift-V` paste · `Shift-PageUp/Down` + wheel scroll scrollback · left-drag select.
+- **Recall overlay** — type to filter, `↑`/`↓`, `Enter` insert, `Esc` close.
+- **Panel** — `↑`/`↓` scroll/move, `→`/`←`/`Enter`/`Space` fold (tree), `Ctrl-Shift-C` copy, `q`/`Esc` close.
+
 ## Milestones
 
 Done: **M1–M10** — engine, resize, alt-screen, multiplexing, command blocks + recall, and the plugin host (out-of-process JSON-RPC; multiplexing dogfooded as a plugin). **AI assistant** plugin (`examples/plugins/ai.py`): `Ctrl-A i` explains the last command, `Ctrl-A c` suggests one, `Ctrl-A m` picks the model (opus/sonnet/haiku/fable, or `JETEM_AI_MODEL`), via Claude (default `claude-opus-4-8`). Two backends (`JETEM_AI_BACKEND`): **cli** (your Claude subscription via the `claude` CLI, no key) or **api** (`anthropic` SDK + `ANTHROPIC_API_KEY`). The cli backend keeps a **persistent** `claude` process (stream-json mode), pre-warmed at load with a warm-standby per conversation, so questions answer at model speed (~5–8s) instead of cold-start speed; one-shot `claude -p` is the fallback. When touching Claude/API code, follow the `claude-api` skill.
 **M11 (done): rich/structured output renderers.** Two renderers, both driven by `richout.py` (`Ctrl-A t`, *policy* in the plugin): **tables** (`host/showTable` + the `TextPanel` table mode) and a **foldable JSON tree** (`host/showTree` + a navigable tree panel mode). `richout` routes by shape — list-of-objects → table, flat dict → key/value table, nested → tree.
 **M12 (done): themes.** `Theme` extraction — all paint colors in `src/theme.rs`, overridable via `~/.config/jetem/theme.toml` (hex strings, partial). Sample at `examples/theme.toml`.
-Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugin tier (WASM/Rhai), plugin-driven theming (`host/setTheme`). See `docs/roadmap.md`.
+**M13 (done): plugin-driven theming.** `host/setTheme` lets a plugin change the live theme at runtime (not persisted): a `preset` name swaps the whole theme, a partial JSON `patch` deep-merges onto the current one (via `Theme::patched`, serde round-trip — omitted colors keep their current value, unlike the static TOML default-fill). Built-in presets `default`/`light`/`solarized-dark` (`Theme::preset`, + user files `~/.config/jetem/themes/<name>.toml`). Demoed by `examples/plugins/theme.py` (`Ctrl-A y` cycle, `Ctrl-A p` accent-patch); SDK `set_theme(preset, patch)`.
+Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugin tier (WASM/Rhai), `host/getTheme` + preset-picker UI, font/glyph providers. See `docs/roadmap.md`.
 
-**Repo:** public on GitHub at https://github.com/davidelka/jetem (`main`, ssh remote `origin`). Renamed from "terminal" → "jetem". 60 unit tests passing.
+**Repo:** public on GitHub at https://github.com/davidelka/jetem (`main`, ssh remote `origin`). Renamed from "terminal" → "jetem". 64 unit tests passing.
 
 ## Working conventions
 
@@ -131,7 +141,7 @@ Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugi
   versions; grep `~/.cargo/registry/src/...` rather than guessing).
 - **Milestone-based commits**, only when asked. End commit messages with the
   `Co-Authored-By: Claude Opus 4.8 (1M context)` trailer. Currently committing to `main`.
-- Keep unit tests green (`cargo test`; 60 passing). Add tests for grid/parser/panel/theme/config logic.
+- Keep unit tests green (`cargo test`; 64 passing). Add tests for grid/parser/panel/theme/config logic.
 
 ## Build / test / run
 

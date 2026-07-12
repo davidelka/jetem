@@ -92,8 +92,11 @@ protocol — host actions, events, the manifest, the chord grammar — is docume
 
 ## Keybindings
 
-The prefix is **`Ctrl-A`** (like tmux's `Ctrl-B`). Core keeps only `r` and `a`; the rest
-are registered by plugins.
+The prefix is **`Ctrl-A`** (like tmux's `Ctrl-B`), then a command key. Core keeps only
+`r` and `a`; the rest are registered by whichever plugins you've enabled in
+`~/.config/jetem/plugins.toml`.
+
+**Prefix chords** (`Ctrl-A` then…):
 
 | Chord | Action | From |
 |---|---|---|
@@ -101,11 +104,30 @@ are registered by plugins.
 | `Ctrl-A a` | send a literal `Ctrl-A` to the shell | core |
 | `Ctrl-A \|` / `v`, `-` / `s` | split pane (left-right / top-bottom) | `mux.py` |
 | `Ctrl-A h` `j` `k` `l` / arrows | move focus between panes | `mux.py` |
-| `Ctrl-A x` | close the focused pane | `mux.py` |
+| `Ctrl-A x` | close the focused pane (last one exits) | `mux.py` |
 | `Ctrl-A i` | explain the last command (AI) | `ai.py` |
 | `Ctrl-A c` | suggest a command (NL → shell) | `ai.py` |
 | `Ctrl-A m` | pick the AI model (opus/sonnet/haiku/fable) | `ai.py` |
-| `Ctrl-A t` | render last output as a table | `richout.py` |
+| `Ctrl-A t` | render last output as a table/tree | `richout.py` |
+| `Ctrl-A y` | cycle color theme (default/light/solarized-dark) | `theme.py` |
+| `Ctrl-A p` | toggle a theme accent color | `theme.py` |
+
+**Global keys** (no prefix):
+
+| Key | Action |
+|---|---|
+| `Ctrl-Shift-C` | copy (panel selection → recall output → mouse selection) |
+| `Ctrl-Shift-V` | paste into the focused pane |
+| `Shift-PageUp` / `Shift-PageDown` | scroll the focused pane's scrollback |
+| mouse wheel | scroll scrollback (3 lines/notch) |
+| mouse drag (left) | select text |
+
+**In the recall overlay** (`Ctrl-A r`): type to filter · `↑`/`↓` move · `Enter` insert
+the selected command (doesn't run it) · `Ctrl-Shift-C` copy its output · `Esc` close.
+
+**In a panel** (`Ctrl-A t`): `↑`/`↓` scroll (or move node in a tree) · `→`/`←` expand/collapse
+· `Enter`/`Space` toggle fold · `PageUp`/`PageDown` page · `Ctrl-Shift-C` copy (table → TSV) ·
+`q`/`Esc` close.
 
 ## Layout
 

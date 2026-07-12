@@ -190,6 +190,7 @@ can ignore). Unknown actions reply `{"ok":false}`.
 | `host/splitPane` | `{"dir": "leftright" | "topbottom"}` | Split the focused pane (default `leftright`). |
 | `host/focusPane` | `{"dir": "left" | "right" | "up" | "down"}` | Move focus to the neighbouring pane. |
 | `host/closePane` | `{}` | Close the focused pane (closing the last one exits the terminal). |
+| `host/setTheme` | `{"preset"?: string, "patch"?: object}` | Change the live color theme (runtime only — **not** written to disk). `preset` swaps the whole theme by name (built-ins: `"default"`, `"light"`, `"solarized-dark"`, plus any `~/.config/jetem/themes/<name>.toml`); an unknown name is ignored. `patch` is a *partial* theme — the same shape as `theme.toml` but as JSON (e.g. `{"panel": {"title": "#ff0000"}}`) — **deep-merged onto the current theme**, so unspecified colors keep their current value. If both are given, `preset` is applied first, then `patch`. |
 
 Example — open an interactive panel:
 

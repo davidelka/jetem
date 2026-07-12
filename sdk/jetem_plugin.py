@@ -99,6 +99,18 @@ class Plugin:
     def close_pane(self):
         self._send("host/closePane", {})
 
+    def set_theme(self, preset=None, patch=None):
+        """Change the live color theme (runtime only, not persisted). Pass `preset`
+        (a name like "default"/"light"/"solarized-dark") to swap the whole theme,
+        and/or `patch` (a partial theme dict, e.g. {"panel": {"title": "#ff0000"}})
+        to deep-merge onto the current theme."""
+        params = {}
+        if preset is not None:
+            params["preset"] = preset
+        if patch is not None:
+            params["patch"] = patch
+        self._send("host/setTheme", params)
+
     # --- run loop ---------------------------------------------------------
 
     def _manifest(self):

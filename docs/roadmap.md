@@ -88,13 +88,18 @@ The event-bus + registries layer is runtime-independent; that's the real design 
   a navigable tree panel mode, with `richout.py` routing nested JSON to it (`Ctrl-A t`).
   Deferred: images (sixel/kitty), inline-in-scrollback rendering (a larger render-model change).
 - [ ] Custom-draw panels / widgets (needs in-process tier)
-- [ ] Themes & custom symbols
+- [x] **M13 Plugin-driven theming** — `host/setTheme` lets a plugin swap the whole
+  theme by `preset` name or deep-merge a partial color `patch` onto the live theme
+  (runtime only). Built-in presets `default`/`light`/`solarized-dark` (+ user files
+  at `~/.config/jetem/themes/<name>.toml`); demoed by `examples/plugins/theme.py`
+  (`Ctrl-A y` cycle, `Ctrl-A p` accent). Custom symbols/glyphs still need the in-process tier.
 
 ### Cross-cutting / later
 - [x] **M12 Extract a `Theme`** — all paint colors live in `src/theme.rs` (`Theme`),
   built-in default = the original look, overridable via `~/.config/jetem/theme.toml`
   (hex strings, partial override). Threaded through `render::paint`, the text panel,
-  and the recall overlay. Next: plugin-driven theming (`host/setTheme`), named presets,
-  font/glyph providers (the in-process tier).
+  and the recall overlay. Plugin-driven theming (`host/setTheme`, named presets) landed
+  in **M13**; next here: `host/getTheme` (needs a plugin-reply path), a preset-picker UI,
+  and font/glyph providers (the in-process tier).
 - Config file (TOML), copy/paste
 - Performance: GPU rendering (wgpu), glyph atlas, damage tracking
