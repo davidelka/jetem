@@ -28,20 +28,26 @@ PRESETS = ["default", "light", "solarized-dark"]
 
 plug = Plugin("theme")
 _idx = 0          # index into PRESETS of the currently-applied preset
-_flipped = False  # whether the terminal-background patch is currently layered on
+_flipped = False  # whether the background-flip patch is currently layered on
 
-# The background to flip to — a deep purple, unmistakable against every preset
-# yet dim enough to keep foreground text readable.
-FLIP_BG = "#2a123f"
+# Presets whose background is light (everything else is treated as dark).
+LIGHT_PRESETS = {"light"}
+# The two poles we flip between. Each pairs a background with a readable
+# foreground, so flipping to the *opposite* luminance keeps text legible
+# (flipping bg alone would leave light text on a light bg, or vice-versa).
+DARK = {"bg": "#101218", "fg": "#cccccc"}
+LIGHT = {"bg": "#f7f7f2", "fg": "#2b2b2b"}
 
 
 def _apply():
-    """(Re)apply the current preset, then the background patch if it's toggled on.
+    """(Re)apply the current preset, then the background flip if it's toggled on.
     Reapplying the preset first is what lets the flip toggle *off* cleanly (it
     restores the preset's own background)."""
     plug.set_theme(preset=PRESETS[_idx])
     if _flipped:
-        plug.set_theme(patch={"terminal": {"bg": FLIP_BG}})
+        # Flip to the opposite of the current preset's background luminance.
+        opposite = DARK if PRESETS[_idx] in LIGHT_PRESETS else LIGHT
+        plug.set_theme(patch={"terminal": opposite})
 
 
 @plug.command("theme.cycle", title="Cycle color theme", keys="prefix y")
