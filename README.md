@@ -110,7 +110,7 @@ The prefix is **`Ctrl-A`** (like tmux's `Ctrl-B`), then a command key. Core keep
 | `Ctrl-A m` | pick the AI model (opus/sonnet/haiku/fable) | `ai.py` |
 | `Ctrl-A t` | render last output as a table/tree | `richout.py` |
 | `Ctrl-A y` | cycle color theme (default/light/solarized-dark) | `theme.py` |
-| `Ctrl-A p` | toggle a theme accent color | `theme.py` |
+| `Ctrl-A p` | flip the terminal background | `theme.py` |
 
 **Global keys** (no prefix):
 

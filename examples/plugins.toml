@@ -23,7 +23,7 @@ command = "python3 /home/david/projects/jetem/examples/plugins/oops.py"
 # command = "python3 /home/david/projects/jetem/examples/plugins/richout.py"
 
 # Theme switcher: Ctrl-A y cycles presets (default/light/solarized-dark) and
-# Ctrl-A p toggles a red accent — dogfoods host/setTheme (runtime theming).
+# Ctrl-A p flips the terminal background — dogfoods host/setTheme (runtime theming).
 # [[plugin]]
 # command = "python3 /home/david/projects/jetem/examples/plugins/theme.py"
 

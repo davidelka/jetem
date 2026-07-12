@@ -92,7 +92,7 @@ The event-bus + registries layer is runtime-independent; that's the real design 
   theme by `preset` name or deep-merge a partial color `patch` onto the live theme
   (runtime only). Built-in presets `default`/`light`/`solarized-dark` (+ user files
   at `~/.config/jetem/themes/<name>.toml`); demoed by `examples/plugins/theme.py`
-  (`Ctrl-A y` cycle, `Ctrl-A p` accent). Custom symbols/glyphs still need the in-process tier.
+  (`Ctrl-A y` cycle, `Ctrl-A p` bg-flip). Custom symbols/glyphs still need the in-process tier.
 
 ### Cross-cutting / later
 - [x] **M12 Extract a `Theme`** — all paint colors live in `src/theme.rs` (`Theme`),
