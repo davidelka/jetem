@@ -24,6 +24,11 @@ pub struct Grid {
     cursor_visible: bool,
     /// Saved cursor position + pen for DECSC/DECRC (`ESC 7` / `ESC 8`, `CSI s/u`).
     saved_cursor: Option<(usize, usize, Cell, bool)>,
+    /// Vertical scroll region (DECSTBM), inclusive 0-based rows. Line feeds at
+    /// `scroll_bottom` scroll only `[scroll_top, scroll_bottom]`. Default = whole
+    /// screen, in which case an upward scroll also archives to scrollback.
+    scroll_top: usize,
+    scroll_bottom: usize,
     /// Lines that have scrolled off the top, oldest at the front.
     scrollback: VecDeque<Vec<Cell>>,
     max_scrollback: usize,
@@ -43,6 +48,8 @@ impl Grid {
             pen: Cell::default(),
             cursor_visible: true,
             saved_cursor: None,
+            scroll_top: 0,
+            scroll_bottom: rows - 1,
             scrollback: VecDeque::new(),
             max_scrollback: 1000,
             view_offset: 0,
@@ -92,10 +99,15 @@ impl Grid {
     /// `\n` — move down one row, scrolling the screen if at the bottom.
     pub fn line_feed(&mut self) {
         self.wrap_pending = false;
-        if self.cursor_row + 1 < self.rows {
+        if self.cursor_row == self.scroll_bottom {
+            // At the bottom margin: scroll the region up by one.
+            if self.full_screen_region() {
+                self.scroll_up(); // whole screen -> archive the top row
+            } else {
+                self.scroll_region_up(self.scroll_top, self.scroll_bottom, 1);
+            }
+        } else if self.cursor_row + 1 < self.rows {
             self.cursor_row += 1;
-        } else {
-            self.scroll_up();
         }
     }
 
@@ -278,10 +290,113 @@ impl Grid {
         self.cells.resize(self.rows * self.cols, blank);
     }
 
+    // --- scroll regions (DECSTBM / SU / SD / IL / DL / RI) ----------------
+
+    fn full_screen_region(&self) -> bool {
+        self.scroll_top == 0 && self.scroll_bottom == self.rows - 1
+    }
+
+    /// DECSTBM — set the top/bottom margins (0-based, inclusive) and home the
+    /// cursor. An invalid range (top >= bottom, or out of bounds) resets to the
+    /// full screen, matching xterm.
+    pub fn set_scroll_region(&mut self, top: usize, bottom: usize) {
+        if top < bottom && bottom < self.rows {
+            self.scroll_top = top;
+            self.scroll_bottom = bottom;
+        } else {
+            self.scroll_top = 0;
+            self.scroll_bottom = self.rows - 1;
+        }
+        self.move_to(0, 0);
+    }
+
+    /// Shift rows `[top, bottom]` up by `n`: the top `n` rows are discarded (a
+    /// partial region has no scrollback), the bottom `n` are blanked.
+    fn scroll_region_up(&mut self, top: usize, bottom: usize, n: usize) {
+        let n = n.min(bottom - top + 1);
+        let blank = self.blank();
+        for row in top..=bottom {
+            for col in 0..self.cols {
+                let val = if row + n <= bottom {
+                    self.cells[self.index(row + n, col)]
+                } else {
+                    blank
+                };
+                let dst = self.index(row, col);
+                self.cells[dst] = val;
+            }
+        }
+    }
+
+    /// Shift rows `[top, bottom]` down by `n`: the top `n` rows are blanked, the
+    /// bottom `n` are discarded.
+    fn scroll_region_down(&mut self, top: usize, bottom: usize, n: usize) {
+        let n = n.min(bottom - top + 1);
+        let blank = self.blank();
+        for row in (top..=bottom).rev() {
+            for col in 0..self.cols {
+                let val = if row >= top + n {
+                    self.cells[self.index(row - n, col)]
+                } else {
+                    blank
+                };
+                let dst = self.index(row, col);
+                self.cells[dst] = val;
+            }
+        }
+    }
+
+    /// SU — scroll the region up `n` lines (cursor unchanged).
+    pub fn scroll_up_n(&mut self, n: usize) {
+        self.scroll_region_up(self.scroll_top, self.scroll_bottom, n);
+    }
+    /// SD — scroll the region down `n` lines (cursor unchanged).
+    pub fn scroll_down_n(&mut self, n: usize) {
+        self.scroll_region_down(self.scroll_top, self.scroll_bottom, n);
+    }
+
+    /// RI — reverse index: cursor up one line, scrolling the region down if it's
+    /// sitting on the top margin.
+    pub fn reverse_index(&mut self) {
+        self.wrap_pending = false;
+        if self.cursor_row == self.scroll_top {
+            self.scroll_region_down(self.scroll_top, self.scroll_bottom, 1);
+        } else if self.cursor_row > 0 {
+            self.cursor_row -= 1;
+        }
+    }
+
+    /// IL — insert `n` blank lines at the cursor row, pushing lines below down
+    /// within the region (only when the cursor is inside the region).
+    pub fn insert_lines(&mut self, n: usize) {
+        if self.cursor_row < self.scroll_top || self.cursor_row > self.scroll_bottom {
+            return;
+        }
+        self.wrap_pending = false;
+        self.scroll_region_down(self.cursor_row, self.scroll_bottom, n);
+        self.cursor_col = 0;
+    }
+
+    /// DL — delete `n` lines at the cursor row, pulling lines below up within the
+    /// region and blanking the bottom.
+    pub fn delete_lines(&mut self, n: usize) {
+        if self.cursor_row < self.scroll_top || self.cursor_row > self.scroll_bottom {
+            return;
+        }
+        self.wrap_pending = false;
+        self.scroll_region_up(self.cursor_row, self.scroll_bottom, n);
+        self.cursor_col = 0;
+    }
+
     // --- scrollback & cursor visibility ----------------------------------
 
     pub fn set_cursor_visible(&mut self, visible: bool) {
         self.cursor_visible = visible;
+    }
+
+    /// How many lines are currently in scrollback.
+    pub fn scrollback_len(&self) -> usize {
+        self.scrollback.len()
     }
 
     /// Cap scrollback length; 0 disables it (used for the alternate screen).
@@ -361,6 +476,10 @@ impl Grid {
         self.cursor_col = self.cursor_col.min(new_cols - 1);
         self.wrap_pending = false;
         self.view_offset = 0;
+        // A resized screen resets the scroll region to the whole screen; the
+        // program re-establishes DECSTBM on its next redraw if it wants one.
+        self.scroll_top = 0;
+        self.scroll_bottom = new_rows - 1;
     }
 
     // --- debugging / headless rendering ----------------------------------
@@ -498,6 +617,65 @@ mod tests {
         g.move_to(3, 7);
         g.restore_cursor();
         assert_eq!((g.cursor_row, g.cursor_col), (1, 3));
+    }
+
+    /// Fill each row of a fresh grid with a distinct letter ("a", "b", …).
+    fn lettered(rows: usize, cols: usize) -> Grid {
+        let mut g = Grid::new(rows, cols);
+        for r in 0..rows {
+            g.move_to(r, 0);
+            let ch = (b'a' + r as u8) as char;
+            for _ in 0..cols {
+                g.print(ch);
+            }
+        }
+        g
+    }
+    fn rows_as_strings(g: &Grid) -> Vec<String> {
+        (0..g.rows)
+            .map(|r| (0..g.cols).map(|c| g.cell(r, c).ch).collect())
+            .collect()
+    }
+
+    #[test]
+    fn line_feed_scrolls_only_the_region() {
+        let mut g = lettered(4, 2); // rows: aa bb cc dd
+        g.set_scroll_region(1, 2); // region = rows 1..=2 (homes cursor to 0,0)
+        g.move_to(2, 0); // sit on the bottom margin
+        g.line_feed(); // region scrolls up: bb<-cc, cc blanked; aa/dd untouched
+        assert_eq!(rows_as_strings(&g), ["aa", "cc", "  ", "dd"]);
+        assert!(g.scrollback_len() == 0); // a partial region never archives
+    }
+
+    #[test]
+    fn reverse_index_at_top_margin_scrolls_down() {
+        let mut g = lettered(4, 2);
+        g.set_scroll_region(1, 2);
+        g.move_to(1, 0); // top margin
+        g.reverse_index(); // region scrolls down: cc<-bb, bb blanked
+        assert_eq!(rows_as_strings(&g), ["aa", "  ", "bb", "dd"]);
+    }
+
+    #[test]
+    fn insert_and_delete_lines() {
+        let mut g = lettered(4, 2); // aa bb cc dd, region = whole screen
+        g.move_to(1, 0);
+        g.insert_lines(1); // blank line at row 1; cc,dd pushed down, dd falls off
+        assert_eq!(rows_as_strings(&g), ["aa", "  ", "bb", "cc"]);
+        let mut g = lettered(4, 2);
+        g.move_to(1, 0);
+        g.delete_lines(1); // remove row 1; cc,dd pull up, bottom blanked
+        assert_eq!(rows_as_strings(&g), ["aa", "cc", "dd", "  "]);
+    }
+
+    #[test]
+    fn scroll_up_down_n() {
+        let mut g = lettered(3, 2);
+        g.scroll_up_n(1); // whole screen up: bb cc __
+        assert_eq!(rows_as_strings(&g), ["bb", "cc", "  "]);
+        let mut g = lettered(3, 2);
+        g.scroll_down_n(1); // __ aa bb
+        assert_eq!(rows_as_strings(&g), ["  ", "aa", "bb"]);
     }
 
     #[test]

@@ -75,8 +75,9 @@ impl Perform for Performer<'_> {
     /// save/restore-cursor pair; charset/keypad designations are safe no-ops.
     fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, byte: u8) {
         match byte {
-            b'7' => self.screen.active_mut().save_cursor(),   // DECSC
+            b'7' => self.screen.active_mut().save_cursor(),    // DECSC
             b'8' => self.screen.active_mut().restore_cursor(), // DECRC
+            b'M' => self.screen.active_mut().reverse_index(),  // RI
             _ => {}
         }
     }
@@ -151,6 +152,17 @@ impl Perform for Performer<'_> {
             // Save / restore cursor (ANSI.SYS form of DECSC/DECRC).
             's' => self.screen.active_mut().save_cursor(),
             'u' => self.screen.active_mut().restore_cursor(),
+            // Scroll region + region scrolling (DECSTBM / SU / SD / IL / DL).
+            'r' => {
+                let rows = self.screen.active().rows;
+                let top = nth(0, 1) - 1;
+                let bottom = nth(1, rows) - 1;
+                self.screen.active_mut().set_scroll_region(top, bottom);
+            }
+            'S' => self.screen.active_mut().scroll_up_n(nth(0, 1)),
+            'T' => self.screen.active_mut().scroll_down_n(nth(0, 1)),
+            'L' => self.screen.active_mut().insert_lines(nth(0, 1)),
+            'M' => self.screen.active_mut().delete_lines(nth(0, 1)),
             'm' => self.sgr(params),
             _ => {} // unhandled CSI (scroll regions, …) — added in later milestones
         }
@@ -365,6 +377,27 @@ mod tests {
         // CSI s / u form.
         let s = run(b"\x1b[shi\x1b[uJ", 1, 6);
         assert_eq!(s.active().cell(0, 0).ch, 'J');
+    }
+
+    #[test]
+    fn scroll_region_and_line_edits() {
+        // DECSTBM to rows 2..3 (1-based), then feed at the bottom margin: only
+        // the region scrolls. Layout: r0="a", r1="b", r2="c", r3="d" (5 wide).
+        let bytes = b"a\r\nb\r\nc\r\nd\x1b[2;3r\x1b[3;1Hc\n";
+        // After \x1b[2;3r the cursor homes to (0,0). Move to row3 col1 (the
+        // bottom margin), print 'c', then \n scrolls region [1,2] up.
+        let s = run(bytes, 4, 5);
+        // Row 0 ('a') and row 3 ('d') are outside the region and untouched.
+        assert_eq!(s.active().cell(0, 0).ch, 'a');
+        assert_eq!(s.active().cell(3, 0).ch, 'd');
+    }
+
+    #[test]
+    fn insert_delete_scroll_lines() {
+        // IL/DL and SU/SD reach the grid.
+        let s = run(b"X\r\nY\x1b[1;1H\x1b[1L", 3, 3); // insert a blank line at top
+        assert_eq!(s.active().cell(0, 0).ch, ' '); // row 0 now blank
+        assert_eq!(s.active().cell(1, 0).ch, 'X'); // X pushed down
     }
 
     #[test]

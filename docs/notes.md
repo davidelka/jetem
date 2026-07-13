@@ -146,9 +146,13 @@ line or redrawing a prompt smears, because the program assumes the terminal can:
 - **Save/restore the cursor:** `ESC 7`/`ESC 8` (DECSC/DECRC) and the ANSI.SYS `CSI s`/`u`.
   A program parks the cursor, draws elsewhere, and returns.
 
-We deliberately deferred **scroll regions** (`DECSTBM ?r`, `SU/SD`, `IL/DL`, `RI`): they
-need region-aware scrolling in `Grid`, and the apps that use them mostly run on the
-alt-screen (already handled).
+**Scroll regions (M16).** `DECSTBM` (`CSI top;bottom r`) sets a top/bottom margin; a
+line feed at the bottom margin then scrolls only that band, and `RI` (reverse index) at
+the top margin scrolls it the other way. `SU`/`SD` (`CSI S`/`T`) scroll the region N lines
+without moving the cursor; `IL`/`DL` (`CSI L`/`M`) insert/delete lines at the cursor,
+shifting the rest of the region. The subtlety worth remembering: **only a full-screen
+upward scroll archives to scrollback** — lines pushed out of a *partial* region are
+discarded (real terminals don't save them), so `Grid` branches on `full_screen_region()`.
 
 **Text attributes (SGR).** The pen already tracked bold/italic/underline/reverse; M15
 adds the rest of the common set: `2` faint/dim, `5` blink, `8` conceal, `9` strike-through
