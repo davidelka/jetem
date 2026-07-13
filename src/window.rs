@@ -748,8 +748,10 @@ impl App {
         }
         // A transient toast (from host/notify) along the bottom for a few
         // seconds. Multi-line answers (e.g. from the AI plugin) render as a
-        // stack of lines sized to fit.
-        if let Some((text, at)) = &self.toast {
+        // stack of lines sized to fit. Suppressed while the search bar is up —
+        // both anchor to the bottom, so a lingering toast would hide the search
+        // prompt and make it look like input is stuck.
+        if let Some((text, at)) = self.toast.as_ref().filter(|_| self.search.is_none()) {
             if at.elapsed().as_secs() < 10 {
                 let (cw, ch) = (self.font.cell_w, self.font.cell_h);
                 let lines: Vec<&str> = text.lines().collect();
