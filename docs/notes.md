@@ -131,6 +131,32 @@ program treats the middle as one inert literal. Security note: strip any `ESC[20
 already in the clipboard, or a crafted paste could close the bracket early and inject
 a command that *does* run.
 
+## 9. Cursor & line-editing CSIs, and text attributes — M15
+
+Beyond the cursor moves (`A/B/C/D`), positioning (`H`), and erase (`J/K`) from the
+early milestones, real programs — especially **shell line editors** (zsh/readline)
+and colored prompts — lean on a handful more. Without them, editing a long command
+line or redrawing a prompt smears, because the program assumes the terminal can:
+- **Position absolutely:** `G` (CHA, to a column), `` ` `` (HPA, same), `d` (VPA, to a
+  row), `E`/`F` (to the start of the line N below/above). Prompts jump to a column
+  constantly.
+- **Edit in place:** `@` (ICH, insert blanks), `P` (DCH, delete chars — shift left),
+  `X` (ECH, blank in place). These let a line editor change part of a row without
+  repainting it, so they must match the shell's model exactly.
+- **Save/restore the cursor:** `ESC 7`/`ESC 8` (DECSC/DECRC) and the ANSI.SYS `CSI s`/`u`.
+  A program parks the cursor, draws elsewhere, and returns.
+
+We deliberately deferred **scroll regions** (`DECSTBM ?r`, `SU/SD`, `IL/DL`, `RI`): they
+need region-aware scrolling in `Grid`, and the apps that use them mostly run on the
+alt-screen (already handled).
+
+**Text attributes (SGR).** The pen already tracked bold/italic/underline/reverse; M15
+adds the rest of the common set: `2` faint/dim, `5` blink, `8` conceal, `9` strike-through
+(and their `22/25/28/29` resets; note `22` is "normal intensity" and clears **both** bold
+and dim). A CPU framebuffer can't animate, so **blink is parsed but not shown**; dim mixes
+the glyph color toward its background, conceal skips the glyph, and underline/strike-through
+draw a 1px rule — which also gave us real underline rendering for the first time.
+
 ## References to read
 - VT100 / xterm "ctlseqs" control-sequence reference.
 - `st` (suckless terminal, ~2k lines of C) — whole pipeline at a glance.

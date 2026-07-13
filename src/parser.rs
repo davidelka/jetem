@@ -71,6 +71,16 @@ impl Perform for Performer<'_> {
         }
     }
 
+    /// A bare escape sequence: `ESC` then a final byte (no `[`). We handle the
+    /// save/restore-cursor pair; charset/keypad designations are safe no-ops.
+    fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, byte: u8) {
+        match byte {
+            b'7' => self.screen.active_mut().save_cursor(),   // DECSC
+            b'8' => self.screen.active_mut().restore_cursor(), // DECRC
+            _ => {}
+        }
+    }
+
     /// A complete CSI sequence: `ESC [ params... action`.
     fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], _ignore: bool, action: char) {
         // Private sequences (DEC modes) are marked with a leading `?`, e.g.
@@ -122,13 +132,25 @@ impl Perform for Performer<'_> {
         // `'m'` arm can take `&mut self` for `sgr` without a borrow conflict.
         match action {
             'A' => self.screen.active_mut().move_up(nth(0, 1)),
-            'B' => self.screen.active_mut().move_down(nth(0, 1)),
-            'C' => self.screen.active_mut().move_right(nth(0, 1)),
+            'B' | 'e' => self.screen.active_mut().move_down(nth(0, 1)),
+            'C' | 'a' => self.screen.active_mut().move_right(nth(0, 1)),
             'D' => self.screen.active_mut().move_left(nth(0, 1)),
+            'E' => self.screen.active_mut().cursor_next_line(nth(0, 1)),
+            'F' => self.screen.active_mut().cursor_prev_line(nth(0, 1)),
+            // CHA / VPA — absolute column / row (1-based on the wire).
+            'G' | '`' => self.screen.active_mut().move_to_col(nth(0, 1) - 1),
+            'd' => self.screen.active_mut().move_to_row(nth(0, 1) - 1),
             // CUP/HVP are 1-based on the wire; convert to our 0-based grid.
             'H' | 'f' => self.screen.active_mut().move_to(nth(0, 1) - 1, nth(1, 1) - 1),
             'J' => self.screen.active_mut().erase_in_display(nth(0, 0) as u16),
             'K' => self.screen.active_mut().erase_in_line(nth(0, 0) as u16),
+            // In-line editing (default count 1).
+            '@' => self.screen.active_mut().insert_chars(nth(0, 1)),
+            'P' => self.screen.active_mut().delete_chars(nth(0, 1)),
+            'X' => self.screen.active_mut().erase_chars(nth(0, 1)),
+            // Save / restore cursor (ANSI.SYS form of DECSC/DECRC).
+            's' => self.screen.active_mut().save_cursor(),
+            'u' => self.screen.active_mut().restore_cursor(),
             'm' => self.sgr(params),
             _ => {} // unhandled CSI (scroll regions, …) — added in later milestones
         }
@@ -158,13 +180,21 @@ impl Performer<'_> {
                     pen.attrs = 0;
                 }
                 1 => pen.attrs |= attr::BOLD,
+                2 => pen.attrs |= attr::DIM,
                 3 => pen.attrs |= attr::ITALIC,
                 4 => pen.attrs |= attr::UNDERLINE,
+                5 => pen.attrs |= attr::BLINK,
                 7 => pen.attrs |= attr::REVERSE,
-                22 => pen.attrs &= !attr::BOLD,
+                8 => pen.attrs |= attr::HIDDEN,
+                9 => pen.attrs |= attr::STRIKETHROUGH,
+                // 22 = "normal intensity" clears both bold and dim.
+                22 => pen.attrs &= !(attr::BOLD | attr::DIM),
                 23 => pen.attrs &= !attr::ITALIC,
                 24 => pen.attrs &= !attr::UNDERLINE,
+                25 => pen.attrs &= !attr::BLINK,
                 27 => pen.attrs &= !attr::REVERSE,
+                28 => pen.attrs &= !attr::HIDDEN,
+                29 => pen.attrs &= !attr::STRIKETHROUGH,
                 30..=37 => pen.fg = Color::Indexed((g[0] - 30) as u8),
                 39 => pen.fg = Color::Default,
                 40..=47 => pen.bg = Color::Indexed((g[0] - 40) as u8),
@@ -302,6 +332,52 @@ mod tests {
         assert!(!s.active().cursor_visible());
         let s = run(b"\x1b[?25l\x1b[?25h", 1, 3);
         assert!(s.active().cursor_visible());
+    }
+
+    #[test]
+    fn cursor_absolute_column_move() {
+        // Print "abcdef", CHA `\x1b[3G` -> column 3 (1-based) = 0-based col 2,
+        // then "xy" overwrites "cd".
+        let s = run(b"abcdef\x1b[3Gxy", 1, 6);
+        let r: String = (0..6).map(|c| s.active().cell(0, c).ch).collect();
+        assert_eq!(r, "abxyef");
+    }
+
+    #[test]
+    fn delete_and_erase_chars() {
+        // DCH: "abcdef", cursor to col 1, delete 2 -> "adef".
+        let s = run(b"abcdef\x1b[2G\x1b[2P", 1, 6);
+        let r: String = (0..6).map(|c| s.active().cell(0, c).ch).collect();
+        assert_eq!(r, "adef  ");
+        // ECH: blank 3 from col 2 in place.
+        let s = run(b"abcdef\x1b[3G\x1b[3X", 1, 6);
+        let r: String = (0..6).map(|c| s.active().cell(0, c).ch).collect();
+        assert_eq!(r, "ab   f");
+    }
+
+    #[test]
+    fn save_restore_cursor_both_forms() {
+        // DECSC/DECRC via ESC 7 / ESC 8: save at col 0, move + type, restore, type.
+        let s = run(b"\x1b7XYZ\x1b8A", 1, 6);
+        // After restore, 'A' overwrites col 0 -> "AYZ".
+        assert_eq!(s.active().cell(0, 0).ch, 'A');
+        assert_eq!(s.active().cell(0, 1).ch, 'Y');
+        // CSI s / u form.
+        let s = run(b"\x1b[shi\x1b[uJ", 1, 6);
+        assert_eq!(s.active().cell(0, 0).ch, 'J');
+    }
+
+    #[test]
+    fn sgr_new_attributes() {
+        use crate::cell::attr;
+        let s = run(b"\x1b[2;4;9mx", 1, 4); // dim + underline + strikethrough
+        let a = s.active().cell(0, 0).attrs;
+        assert!(a & attr::DIM != 0);
+        assert!(a & attr::UNDERLINE != 0);
+        assert!(a & attr::STRIKETHROUGH != 0);
+        // 22 clears bold AND dim together; 24/29 clear their own.
+        let s = run(b"\x1b[1;2mx\x1b[22my", 1, 4);
+        assert_eq!(s.active().cell(0, 1).attrs & (attr::BOLD | attr::DIM), 0);
     }
 
     #[test]

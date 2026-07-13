@@ -105,12 +105,28 @@ pub fn paint(
                 bg = theme.terminal.selection.rgb();
             }
 
+            // Faint (SGR 2): pull the glyph color toward its background.
+            if cell.attrs & attr::DIM != 0 {
+                let mix = |f: u8, b: u8| ((f as u16 * 11 + b as u16 * 9) / 20) as u8;
+                fg = (mix(fg.0, bg.0), mix(fg.1, bg.1), mix(fg.2, bg.2));
+            }
+
             let x0 = rect.x + col * cw;
             let y0 = rect.y + row * ch_;
             fill_rect(buf, width, height, x0, y0, cw, ch_, pack(bg));
 
-            if cell.ch != ' ' {
+            // Concealed (SGR 8) skips the glyph but still draws any lines below.
+            let hidden = cell.attrs & attr::HIDDEN != 0;
+            if cell.ch != ' ' && !hidden {
                 draw_glyph(buf, width, height, font, cell.ch, x0, y0, base, fg);
+            }
+            // Underline (SGR 4) and strike-through (SGR 9): a 1px rule in fg.
+            if cell.attrs & attr::UNDERLINE != 0 {
+                let ly = (base + 1).min(ch_ - 1);
+                fill_rect(buf, width, height, x0, y0 + ly, cw, 1, pack(fg));
+            }
+            if cell.attrs & attr::STRIKETHROUGH != 0 {
+                fill_rect(buf, width, height, x0, y0 + ch_ / 2, cw, 1, pack(fg));
             }
         }
     }

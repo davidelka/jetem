@@ -95,6 +95,12 @@ The event-bus + registries layer is runtime-independent; that's the real design 
   (`Ctrl-A y` cycle, `Ctrl-A p` bg-flip). Custom symbols/glyphs still need the in-process tier.
 
 ### Cross-cutting / later
+- [x] **M15 Parser correctness — cursor/edit CSIs + text attributes.** Added the
+  sequences shell line editors and colored prompts rely on: `G/`` ` ``/d` (CHA/HPA/VPA),
+  `E/F` (CNL/CPL), `@/P/X` (ICH/DCH/ECH), and save/restore cursor (`ESC 7/8`, `CSI s/u`).
+  Plus the rest of the SGR attribute set (2 dim, 5 blink, 8 conceal, 9 strike-through +
+  resets) — dim/conceal/underline/strike-through now render; blink is parsed only.
+  Deferred: scroll regions (DECSTBM/SU/SD/IL/DL/RI) — need region-aware `Grid` scrolling.
 - [x] **M14 Mouse reporting + bracketed paste** — core input-side DEC modes. Mouse
   tracking `?1000/1002/1003` with SGR `?1006` (legacy X10 too) so vim/tmux/htop/less
   get clicks, drags, and wheel; **Shift** bypasses to keep local text selection.

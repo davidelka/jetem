@@ -126,9 +126,10 @@ Done: **M1–M10** — engine, resize, alt-screen, multiplexing, command blocks 
 **M12 (done): themes.** `Theme` extraction — all paint colors in `src/theme.rs`, overridable via `~/.config/jetem/theme.toml` (hex strings, partial). Sample at `examples/theme.toml`.
 **M13 (done): plugin-driven theming.** `host/setTheme` lets a plugin change the live theme at runtime (not persisted): a `preset` name swaps the whole theme, a partial JSON `patch` deep-merges onto the current one (via `Theme::patched`, serde round-trip — omitted colors keep their current value, unlike the static TOML default-fill). Built-in presets `default`/`light`/`solarized-dark` (`Theme::preset`, + user files `~/.config/jetem/themes/<name>.toml`). Demoed by `examples/plugins/theme.py` (`Ctrl-A y` cycle, `Ctrl-A p` bg-flip); SDK `set_theme(preset, patch)`.
 **M14 (done): mouse reporting + bracketed paste.** Core input-side DEC modes, stored on `Screen` (`Modes`/`MouseTracking`), set by the parser and read by the event loop. Mouse tracking `?1000/1002/1003` + SGR `?1006` (legacy X10 fallback) so vim/tmux/htop/less get clicks/drag/wheel; **Shift** bypasses reporting to keep local text selection. Bracketed paste `?2004` wraps pastes in `ESC[200~…201~` (embedded `201~` stripped). Encoding lives in `window::encode_mouse`/`wrap_paste`; `report_mouse` gates by tracking level.
-Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugin tier (WASM/Rhai), `host/getTheme` + preset-picker UI, font/glyph providers, scrollback text search. See `docs/roadmap.md`.
+**M15 (done): parser correctness — cursor/edit CSIs + text attributes.** Added the sequences shell line editors and colored prompts rely on: `G`/`` ` ``/`d` (CHA/HPA/VPA absolute column/row), `E`/`F` (CNL/CPL), `@`/`P`/`X` (ICH/DCH/ECH in-line insert/delete/erase), and save/restore cursor (`ESC 7`/`8` DECSC/DECRC + `CSI s`/`u`) via a new `esc_dispatch`. New `Grid` methods (`move_to_col/row`, `cursor_next/prev_line`, `insert/delete/erase_chars`, `save/restore_cursor`). Plus the rest of the SGR attributes (2 dim, 5 blink, 8 conceal, 9 strike-through + 22/25/28/29 resets; `attr::DIM/BLINK/HIDDEN/STRIKETHROUGH` in `cell.rs`) — render.rs now draws dim/conceal/underline/strike-through (blink parsed only). **Deferred:** scroll regions (DECSTBM/SU/SD/IL/DL/RI — need region-aware Grid scrolling).
+Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugin tier (WASM/Rhai), `host/getTheme` + preset-picker UI, font/glyph providers, scrollback text search, scroll regions. See `docs/roadmap.md`.
 
-**Repo:** public on GitHub at https://github.com/davidelka/jetem (`main`, ssh remote `origin`). Renamed from "terminal" → "jetem". 68 unit tests passing.
+**Repo:** public on GitHub at https://github.com/davidelka/jetem (`main`, ssh remote `origin`). Renamed from "terminal" → "jetem". 77 unit tests passing.
 
 ## Working conventions
 
@@ -142,7 +143,7 @@ Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugi
   versions; grep `~/.cargo/registry/src/...` rather than guessing).
 - **Milestone-based commits**, only when asked. End commit messages with the
   `Co-Authored-By: Claude Opus 4.8 (1M context)` trailer. Currently committing to `main`.
-- Keep unit tests green (`cargo test`; 68 passing). Add tests for grid/parser/panel/theme/config logic.
+- Keep unit tests green (`cargo test`; 77 passing). Add tests for grid/parser/panel/theme/config logic.
 
 ## Build / test / run
 

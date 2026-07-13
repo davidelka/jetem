@@ -22,6 +22,8 @@ pub struct Grid {
     pub pen: Cell,
     /// Whether the cursor should be drawn (toggled by DECTCEM `?25 h/l`).
     cursor_visible: bool,
+    /// Saved cursor position + pen for DECSC/DECRC (`ESC 7` / `ESC 8`, `CSI s/u`).
+    saved_cursor: Option<(usize, usize, Cell, bool)>,
     /// Lines that have scrolled off the top, oldest at the front.
     scrollback: VecDeque<Vec<Cell>>,
     max_scrollback: usize,
@@ -40,6 +42,7 @@ impl Grid {
             wrap_pending: false,
             pen: Cell::default(),
             cursor_visible: true,
+            saved_cursor: None,
             scrollback: VecDeque::new(),
             max_scrollback: 1000,
             view_offset: 0,
@@ -137,6 +140,93 @@ impl Grid {
         self.wrap_pending = false;
         self.cursor_row = row.min(self.rows - 1);
         self.cursor_col = col.min(self.cols - 1);
+    }
+
+    /// CHA — move to an absolute column (0-based), keeping the row.
+    pub fn move_to_col(&mut self, col: usize) {
+        self.wrap_pending = false;
+        self.cursor_col = col.min(self.cols - 1);
+    }
+    /// VPA — move to an absolute row (0-based), keeping the column.
+    pub fn move_to_row(&mut self, row: usize) {
+        self.wrap_pending = false;
+        self.cursor_row = row.min(self.rows - 1);
+    }
+    /// CNL — down `n` lines and to column 0.
+    pub fn cursor_next_line(&mut self, n: usize) {
+        self.move_down(n);
+        self.cursor_col = 0;
+    }
+    /// CPL — up `n` lines and to column 0.
+    pub fn cursor_prev_line(&mut self, n: usize) {
+        self.move_up(n);
+        self.cursor_col = 0;
+    }
+
+    // --- in-line editing (CSI @ / P / X) ---------------------------------
+    // Line editors (zsh/readline) lean on these to redraw a command line
+    // without repainting the whole row.
+
+    /// ICH — insert `n` blank cells at the cursor, shifting the rest of the line
+    /// right; cells pushed past the last column are dropped.
+    pub fn insert_chars(&mut self, n: usize) {
+        self.wrap_pending = false;
+        let (row, col, cols) = (self.cursor_row, self.cursor_col, self.cols);
+        let n = n.min(cols - col);
+        let blank = self.blank();
+        // Walk right-to-left so we don't overwrite cells we still need to move.
+        for c in (col..cols).rev() {
+            let val = if c >= col + n {
+                self.cells[self.index(row, c - n)]
+            } else {
+                blank
+            };
+            let dst = self.index(row, c);
+            self.cells[dst] = val;
+        }
+    }
+    /// DCH — delete `n` cells at the cursor, shifting the rest of the line left
+    /// and backfilling the end with blanks.
+    pub fn delete_chars(&mut self, n: usize) {
+        self.wrap_pending = false;
+        let (row, col, cols) = (self.cursor_row, self.cursor_col, self.cols);
+        let n = n.min(cols - col);
+        let blank = self.blank();
+        for c in col..cols {
+            let val = if c + n < cols {
+                self.cells[self.index(row, c + n)]
+            } else {
+                blank
+            };
+            let dst = self.index(row, c);
+            self.cells[dst] = val;
+        }
+    }
+    /// ECH — erase (blank) `n` cells from the cursor, without moving anything.
+    pub fn erase_chars(&mut self, n: usize) {
+        self.wrap_pending = false;
+        let (row, col, cols) = (self.cursor_row, self.cursor_col, self.cols);
+        let blank = self.blank();
+        for c in col..(col + n).min(cols) {
+            let idx = self.index(row, c);
+            self.cells[idx] = blank;
+        }
+    }
+
+    // --- save / restore cursor (DECSC / DECRC) ---------------------------
+
+    /// DECSC — remember the cursor position and pen.
+    pub fn save_cursor(&mut self) {
+        self.saved_cursor = Some((self.cursor_row, self.cursor_col, self.pen, self.wrap_pending));
+    }
+    /// DECRC — restore what `save_cursor` remembered (no-op if never saved).
+    pub fn restore_cursor(&mut self) {
+        if let Some((row, col, pen, wrap)) = self.saved_cursor {
+            self.cursor_row = row.min(self.rows - 1);
+            self.cursor_col = col.min(self.cols - 1);
+            self.pen = pen;
+            self.wrap_pending = wrap;
+        }
     }
 
     // --- erasing (CSI J / K) ---------------------------------------------
@@ -349,6 +439,65 @@ mod tests {
         g.carriage_return();
         g.line_feed();
         assert_eq!((g.cursor_row, g.cursor_col), (1, 0));
+    }
+
+    /// Type a string into row 0 starting at col 0.
+    fn line(cols: usize, s: &str) -> Grid {
+        let mut g = Grid::new(1, cols);
+        for ch in s.chars() {
+            g.print(ch);
+        }
+        g
+    }
+    fn row0(g: &Grid) -> String {
+        (0..g.cols).map(|c| g.cell(0, c).ch).collect()
+    }
+
+    #[test]
+    fn delete_chars_shifts_left_and_backfills() {
+        let mut g = line(6, "abcdef");
+        g.move_to_col(1); // cursor on 'b'
+        g.delete_chars(2); // remove "bc"
+        assert_eq!(row0(&g), "adef  ");
+    }
+
+    #[test]
+    fn insert_chars_shifts_right_and_drops_overflow() {
+        let mut g = line(6, "abcdef");
+        g.move_to_col(1);
+        g.insert_chars(2); // two blanks at col 1; "ef" fall off the end
+        assert_eq!(row0(&g), "a  bcd");
+    }
+
+    #[test]
+    fn erase_chars_blanks_in_place() {
+        let mut g = line(6, "abcdef");
+        g.move_to_col(2);
+        g.erase_chars(3); // blank "cde", cursor unmoved
+        assert_eq!(row0(&g), "ab   f");
+        assert_eq!(g.cursor_col, 2);
+    }
+
+    #[test]
+    fn column_and_line_moves() {
+        let mut g = Grid::new(4, 8);
+        g.move_to(2, 5);
+        g.move_to_col(1); // CHA keeps row
+        assert_eq!((g.cursor_row, g.cursor_col), (2, 1));
+        g.move_to_row(0); // VPA keeps col
+        assert_eq!((g.cursor_row, g.cursor_col), (0, 1));
+        g.cursor_next_line(2); // down 2, col 0
+        assert_eq!((g.cursor_row, g.cursor_col), (2, 0));
+    }
+
+    #[test]
+    fn save_and_restore_cursor() {
+        let mut g = Grid::new(4, 8);
+        g.move_to(1, 3);
+        g.save_cursor();
+        g.move_to(3, 7);
+        g.restore_cursor();
+        assert_eq!((g.cursor_row, g.cursor_col), (1, 3));
     }
 
     #[test]

@@ -16,6 +16,14 @@ pub mod attr {
     pub const ITALIC: u8 = 1 << 1;
     pub const UNDERLINE: u8 = 1 << 2;
     pub const REVERSE: u8 = 1 << 3;
+    /// Faint/dim (SGR 2): render the foreground at reduced intensity.
+    pub const DIM: u8 = 1 << 4;
+    /// Blink (SGR 5): stored but not animated (a static framebuffer).
+    pub const BLINK: u8 = 1 << 5;
+    /// Concealed/hidden (SGR 8): the glyph is not drawn.
+    pub const HIDDEN: u8 = 1 << 6;
+    /// Crossed-out (SGR 9): a line through the middle of the cell.
+    pub const STRIKETHROUGH: u8 = 1 << 7;
 }
 
 /// One screen cell: the glyph plus how to paint it.
