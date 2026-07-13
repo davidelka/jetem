@@ -24,6 +24,7 @@ use crate::panel::{TextPanel, TreeNode};
 use crate::plugin::{Plugin, PluginId, PluginInbound, Registry};
 use crate::recall::Recall;
 use crate::render;
+use crate::screen::MouseTracking;
 use crate::selection::Selection;
 use crate::theme::Theme;
 
@@ -77,6 +78,10 @@ pub struct App {
     selection: Option<Selection>,
     /// True while the left button is held (extending a selection).
     selecting: bool,
+    /// While a program has mouse tracking on, the button currently held down
+    /// (0=left, 1=middle, 2=right) so we can report drag motion. `None` = no
+    /// button pressed.
+    mouse_held: Option<u8>,
     /// Latest mouse position in pixels.
     cursor_px: (f64, f64),
     /// System clipboard; `None` if it failed to initialize.
@@ -124,6 +129,7 @@ impl App {
             toast: None,
             selection: None,
             selecting: false,
+            mouse_held: None,
             cursor_px: (0.0, 0.0),
             clipboard: arboard::Clipboard::new().ok(),
             win_w: initial.w as u32,
@@ -345,7 +351,10 @@ impl App {
         self.set_clipboard(text);
     }
 
-    /// Paste the clipboard into the focused pane.
+    /// Paste the clipboard into the focused pane. If the program has bracketed
+    /// paste on (`?2004h` — set by vim, most shells' line editors, etc.), wrap the
+    /// text in `ESC[200~ … ESC[201~` so it's treated as one inert block instead of
+    /// typed keystrokes (no auto-run, no vim auto-indent cascade).
     fn paste(&mut self) {
         let text = match &mut self.clipboard {
             Some(cb) => cb.get_text().unwrap_or_default(),
@@ -354,9 +363,51 @@ impl App {
         if text.is_empty() {
             return;
         }
+        let bracketed = self
+            .panes
+            .get(&self.focused)
+            .map(|p| p.screen().lock().unwrap().modes().bracketed_paste)
+            .unwrap_or(false);
+        let bytes = wrap_paste(&text, bracketed);
         if let Some(p) = self.panes.get_mut(&self.focused) {
-            p.write_input(text.as_bytes());
+            p.write_input(&bytes);
         }
+    }
+
+    /// If a program in the pane under the pointer has mouse tracking on, encode
+    /// this event and send it to that pane's PTY; return whether it was consumed.
+    /// Holding **Shift** bypasses reporting so you can always select text locally
+    /// (matching xterm). Motion is only reported at the level the program asked
+    /// for: a drag needs ButtonEvent (`?1002`), free motion needs AnyEvent (`?1003`).
+    fn report_mouse(&mut self, kind: MouseKind, button: u8, px: f64, py: f64) -> bool {
+        if self.mods.shift_key() {
+            return false;
+        }
+        let Some((pane, row, col)) = self.cell_at(px, py) else {
+            return false;
+        };
+        let modes = match self.panes.get(&pane) {
+            Some(p) => p.screen().lock().unwrap().modes(),
+            None => return false,
+        };
+        if modes.mouse == MouseTracking::Off {
+            return false;
+        }
+        if matches!(kind, MouseKind::Motion) {
+            let ok = match modes.mouse {
+                MouseTracking::AnyEvent => true,
+                MouseTracking::ButtonEvent => button != 3, // only while dragging
+                _ => false,
+            };
+            if !ok {
+                return false;
+            }
+        }
+        let bytes = encode_mouse(kind, button, col, row, modes.mouse_sgr, self.mods);
+        if let Some(p) = self.panes.get_mut(&pane) {
+            p.write_input(&bytes);
+        }
+        true
     }
 
     /// Handle a message from a plugin (runs on the main thread).
@@ -677,6 +728,13 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_px = (position.x, position.y);
+                // If a program grabbed the mouse, report motion first: a drag (a
+                // held button) at ButtonEvent level, or any motion at AnyEvent.
+                // `3` is the "no button" code used when hovering under AnyEvent.
+                let btn = self.mouse_held.unwrap_or(3);
+                if self.report_mouse(MouseKind::Motion, btn, position.x, position.y) {
+                    return;
+                }
                 if !self.selecting {
                     return;
                 }
@@ -703,34 +761,62 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
-            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
+            WindowEvent::MouseInput { state, button, .. } => {
                 let (px, py) = self.cursor_px;
-                match state {
-                    ElementState::Pressed => {
-                        self.selecting = true;
-                        if self.panel.is_some() {
-                            let (wp, hp) = (self.win_w as usize, self.win_h as usize);
-                            let cell = self.panel.as_ref().and_then(|p| p.cell_at(px, py, wp, hp, &self.font));
-                            if let (Some(pos), Some(p)) = (cell, self.panel.as_mut()) {
-                                p.begin_select(pos);
-                            }
-                        } else {
-                            self.selection = self
-                                .cell_at(px, py)
-                                .map(|(pane, row, col)| Selection::new(pane, (row, col)));
-                        }
-                    }
-                    ElementState::Released => self.selecting = false,
+                // Map to the wire button code; ignore back/forward/extra buttons.
+                let code = match button {
+                    MouseButton::Left => 0,
+                    MouseButton::Middle => 1,
+                    MouseButton::Right => 2,
+                    _ => return,
+                };
+                let pressed = state == ElementState::Pressed;
+                // A tracking program gets the click (unless Shift bypasses it).
+                let kind = if pressed { MouseKind::Press } else { MouseKind::Release };
+                if self.report_mouse(kind, code, px, py) {
+                    self.mouse_held = if pressed { Some(code) } else { None };
+                    return;
                 }
-                if let Some(w) = &self.window {
-                    w.request_redraw();
+                // Otherwise: local text selection, left button only (as before).
+                if code == 0 {
+                    match state {
+                        ElementState::Pressed => {
+                            self.selecting = true;
+                            if self.panel.is_some() {
+                                let (wp, hp) = (self.win_w as usize, self.win_h as usize);
+                                let cell = self.panel.as_ref().and_then(|p| p.cell_at(px, py, wp, hp, &self.font));
+                                if let (Some(pos), Some(p)) = (cell, self.panel.as_mut()) {
+                                    p.begin_select(pos);
+                                }
+                            } else {
+                                self.selection = self
+                                    .cell_at(px, py)
+                                    .map(|(pane, row, col)| Selection::new(pane, (row, col)));
+                            }
+                        }
+                        ElementState::Released => self.selecting = false,
+                    }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let lines = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => (y * 3.0) as isize,
-                    MouseScrollDelta::PixelDelta(p) => (p.y / self.font.cell_h as f64) as isize,
+                let (px, py) = self.cursor_px;
+                let (dir, lines) = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => (y, (y * 3.0) as isize),
+                    MouseScrollDelta::PixelDelta(p) => {
+                        (p.y as f32, (p.y / self.font.cell_h as f64) as isize)
+                    }
                 };
+                // A tracking program gets wheel-up (64) / wheel-down (65).
+                if dir != 0.0 {
+                    let kind = if dir > 0.0 { MouseKind::WheelUp } else { MouseKind::WheelDown };
+                    if self.report_mouse(kind, 0, px, py) {
+                        return;
+                    }
+                }
+                // Otherwise scroll our local scrollback viewport (as before).
                 if lines != 0 {
                     if let Some(p) = self.panes.get(&self.focused) {
                         p.screen().lock().unwrap().active_mut().scroll_view(lines);
@@ -742,6 +828,13 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state != ElementState::Pressed {
+                    return;
+                }
+                // A bare modifier press (Ctrl/Shift/Alt/…) is never a command and
+                // must not disturb an active selection — otherwise pressing Ctrl to
+                // begin Ctrl-Shift-C would clear the marks before Shift+C arrives
+                // (the fall-through below treats any other key as "typing").
+                if is_modifier_key(&event) {
                     return;
                 }
                 // Ctrl-Shift-C / Ctrl-Shift-V: clipboard, handled before the
@@ -925,6 +1018,77 @@ fn encode_key(event: &KeyEvent, mods: ModifiersState) -> Option<Vec<u8>> {
     }
 }
 
+/// The kind of mouse event to report to a program (see [`encode_mouse`]).
+#[derive(Clone, Copy)]
+enum MouseKind {
+    Press,
+    Release,
+    Motion,
+    WheelUp,
+    WheelDown,
+}
+
+/// Encode a mouse event as the escape sequence a tracking program expects.
+///
+/// Two wire formats: **SGR** (`?1006`, preferred) writes decimal coordinates —
+/// `ESC[<Cb;Cx;Cy` then `M` for press/motion/wheel or `m` for release — so it
+/// isn't limited to 223 columns. The **legacy X10** form packs each field into
+/// one byte offset by 32 (`ESC[M <Cb+32><Cx+32><Cy+32>`), which is why old
+/// terminals topped out at column 223. `Cb` is the button (0/1/2), OR-ed with
+/// modifier bits (shift 4, alt 8, ctrl 16), plus 32 for motion; the wheel is
+/// 64 (up) / 65 (down). `col`/`row` are 0-based here and sent 1-based.
+fn encode_mouse(
+    kind: MouseKind,
+    button: u8,
+    col: usize,
+    row: usize,
+    sgr: bool,
+    mods: ModifiersState,
+) -> Vec<u8> {
+    let mut mod_bits: u32 = 0;
+    if mods.shift_key() {
+        mod_bits |= 4;
+    }
+    if mods.alt_key() {
+        mod_bits |= 8;
+    }
+    if mods.control_key() {
+        mod_bits |= 16;
+    }
+    let cb = match kind {
+        MouseKind::Press | MouseKind::Release => button as u32,
+        MouseKind::Motion => button as u32 + 32, // the "motion" bit
+        MouseKind::WheelUp => 64,
+        MouseKind::WheelDown => 65,
+    } | mod_bits;
+    let (x, y) = (col as u32 + 1, row as u32 + 1);
+
+    if sgr {
+        let final_ch = if matches!(kind, MouseKind::Release) { 'm' } else { 'M' };
+        format!("\x1b[<{cb};{x};{y}{final_ch}").into_bytes()
+    } else {
+        // Legacy can't say *which* button was released, so release is always 3.
+        let cb = if matches!(kind, MouseKind::Release) { 3 | mod_bits } else { cb };
+        let enc = |n: u32| (n + 32).min(255) as u8;
+        vec![0x1b, b'[', b'M', enc(cb), enc(x), enc(y)]
+    }
+}
+
+/// Prepare clipboard text for the PTY. With bracketed paste on, wrap it in
+/// `ESC[200~ … ESC[201~`; and strip any `ESC[201~` already inside the payload so
+/// a crafted clipboard can't close the bracket early and inject running commands.
+fn wrap_paste(text: &str, bracketed: bool) -> Vec<u8> {
+    if !bracketed {
+        return text.as_bytes().to_vec();
+    }
+    let cleaned = text.replace("\x1b[201~", "");
+    let mut out = Vec::with_capacity(cleaned.len() + 12);
+    out.extend_from_slice(b"\x1b[200~");
+    out.extend_from_slice(cleaned.as_bytes());
+    out.extend_from_slice(b"\x1b[201~");
+    out
+}
+
 /// The chord string a plugin keybinding matches, e.g. "prefix |" / "prefix up".
 fn chord_string(event: &KeyEvent) -> Option<String> {
     match &event.logical_key {
@@ -998,4 +1162,50 @@ fn is_modifier_key(event: &KeyEvent) -> bool {
                 | NamedKey::Hyper
         )
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sgr_mouse_encoding() {
+        let none = ModifiersState::empty();
+        // Left press at col 0,row 0 -> button 0, coords 1-based, final 'M'.
+        assert_eq!(encode_mouse(MouseKind::Press, 0, 0, 0, true, none), b"\x1b[<0;1;1M");
+        // Release keeps the button code but ends in lowercase 'm'.
+        assert_eq!(encode_mouse(MouseKind::Release, 0, 4, 2, true, none), b"\x1b[<0;5;3m");
+        // Wheel up is button 64; wheel down 65.
+        assert_eq!(encode_mouse(MouseKind::WheelUp, 0, 0, 0, true, none), b"\x1b[<64;1;1M");
+        // Ctrl adds bit 16: left press becomes button 16.
+        assert_eq!(
+            encode_mouse(MouseKind::Press, 0, 0, 0, true, ModifiersState::CONTROL),
+            b"\x1b[<16;1;1M"
+        );
+        // A drag (motion with a held button) sets the motion bit (+32).
+        assert_eq!(encode_mouse(MouseKind::Motion, 0, 0, 0, true, none), b"\x1b[<32;1;1M");
+    }
+
+    #[test]
+    fn legacy_mouse_encoding() {
+        let none = ModifiersState::empty();
+        // Each field is offset by 32: left press at (0,0) -> ESC[M <space><!><!>.
+        assert_eq!(encode_mouse(MouseKind::Press, 0, 0, 0, false, none), b"\x1b[M \x21\x21");
+        // Legacy release can't name the button -> code 3 (35 = '#').
+        assert_eq!(encode_mouse(MouseKind::Release, 2, 0, 0, false, none), b"\x1b[M#\x21\x21");
+    }
+
+    #[test]
+    fn bracketed_paste_wraps_and_sanitizes() {
+        // Off: raw bytes through unchanged.
+        assert_eq!(wrap_paste("ls\n", false), b"ls\n");
+        // On: wrapped in the 200~/201~ brackets.
+        assert_eq!(wrap_paste("ls", true), b"\x1b[200~ls\x1b[201~");
+        // A payload that smuggles a closing bracket is stripped, so it can't end
+        // the paste early and inject a runnable command.
+        assert_eq!(
+            wrap_paste("a\x1b[201~rm -rf /", true),
+            b"\x1b[200~arm -rf /\x1b[201~"
+        );
+    }
 }

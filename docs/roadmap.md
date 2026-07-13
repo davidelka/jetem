@@ -95,6 +95,11 @@ The event-bus + registries layer is runtime-independent; that's the real design 
   (`Ctrl-A y` cycle, `Ctrl-A p` bg-flip). Custom symbols/glyphs still need the in-process tier.
 
 ### Cross-cutting / later
+- [x] **M14 Mouse reporting + bracketed paste** — core input-side DEC modes. Mouse
+  tracking `?1000/1002/1003` with SGR `?1006` (legacy X10 too) so vim/tmux/htop/less
+  get clicks, drags, and wheel; **Shift** bypasses to keep local text selection.
+  Bracketed paste `?2004` wraps pastes in `ESC[200~ … ESC[201~` (with `201~`
+  sanitized). Modes live on `Screen`; encoding in `window::encode_mouse`/`wrap_paste`.
 - [x] **M12 Extract a `Theme`** — all paint colors live in `src/theme.rs` (`Theme`),
   built-in default = the original look, overridable via `~/.config/jetem/theme.toml`
   (hex strings, partial override). Threaded through `render::paint`, the text panel,

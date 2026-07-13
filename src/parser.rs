@@ -7,7 +7,7 @@ use vte::{Params, Perform};
 
 use crate::block::BlockTracker;
 use crate::cell::{attr, Color};
-use crate::screen::Screen;
+use crate::screen::{MouseTracking, Screen};
 
 /// Holds a mutable borrow of the screen (and the block tracker) for the duration
 /// of one `advance()` call. Output is routed to the screen's active buffer; OSC
@@ -89,6 +89,22 @@ impl Perform for Performer<'_> {
                         self.screen.leave_alt();
                     }
                 }
+                // Mouse tracking level (`?1000/1002/1003`). Setting any of them
+                // selects that level; resetting returns to `Off`. A program sets
+                // exactly one, so last-writer-wins matches real usage. (The legacy
+                // X10 `?9` and the `?1005/1015` encodings are intentionally skipped
+                // — obsolete; every modern app uses 1000/1002/1003 + SGR 1006.)
+                1000 | 1002 | 1003 => {
+                    let level = match (set, mode) {
+                        (false, _) => MouseTracking::Off,
+                        (true, 1000) => MouseTracking::Normal,
+                        (true, 1002) => MouseTracking::ButtonEvent,
+                        (true, _) => MouseTracking::AnyEvent,
+                    };
+                    self.screen.modes_mut().mouse = level;
+                }
+                1006 => self.screen.modes_mut().mouse_sgr = set,
+                2004 => self.screen.modes_mut().bracketed_paste = set,
                 _ => {}
             }
             return;
@@ -286,6 +302,19 @@ mod tests {
         assert!(!s.active().cursor_visible());
         let s = run(b"\x1b[?25l\x1b[?25h", 1, 3);
         assert!(s.active().cursor_visible());
+    }
+
+    #[test]
+    fn mouse_and_paste_modes_toggle() {
+        // Tracking level follows the last ?1000/1002/1003 set; ?...l clears to Off.
+        assert_eq!(run(b"\x1b[?1000h", 1, 3).modes().mouse, MouseTracking::Normal);
+        assert_eq!(run(b"\x1b[?1002h", 1, 3).modes().mouse, MouseTracking::ButtonEvent);
+        assert_eq!(run(b"\x1b[?1003h", 1, 3).modes().mouse, MouseTracking::AnyEvent);
+        assert_eq!(run(b"\x1b[?1000h\x1b[?1000l", 1, 3).modes().mouse, MouseTracking::Off);
+        // SGR encoding and bracketed paste are independent bools.
+        assert!(run(b"\x1b[?1006h", 1, 3).modes().mouse_sgr);
+        assert!(run(b"\x1b[?2004h", 1, 3).modes().bracketed_paste);
+        assert!(!run(b"\x1b[?2004h\x1b[?2004l", 1, 3).modes().bracketed_paste);
     }
 
     #[test]

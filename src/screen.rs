@@ -9,10 +9,42 @@
 
 use crate::grid::Grid;
 
+/// How much mouse activity a program has asked to be reported (DEC private modes
+/// `?1000/1002/1003`). Each level is a superset of the one before: `Normal` sends
+/// button press+release; `ButtonEvent` adds motion *while a button is held* (drag);
+/// `AnyEvent` adds motion even with no button down. A program picks one; the last
+/// `?...h` wins, and any matching `?...l` returns to `Off`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum MouseTracking {
+    #[default]
+    Off,
+    Normal,
+    ButtonEvent,
+    AnyEvent,
+}
+
+/// Per-terminal input modes toggled by the running program via DEC private
+/// sequences. These live here (not in `Grid`) because they're terminal-wide —
+/// one set shared by the primary and alternate buffers — and because the input
+/// side (the window/event loop) reads them while the parser (reader thread) sets
+/// them, both through the `Screen`'s existing lock.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Modes {
+    /// Mouse tracking level (`?1000/1002/1003`).
+    pub mouse: MouseTracking,
+    /// SGR mouse encoding (`?1006`): coordinates as decimal text rather than the
+    /// legacy single-byte form, so they aren't capped at 223.
+    pub mouse_sgr: bool,
+    /// Bracketed paste (`?2004`): wrap pasted text in `ESC[200~ … ESC[201~` so the
+    /// program can tell a paste from typing (and not run it line-by-line).
+    pub bracketed_paste: bool,
+}
+
 pub struct Screen {
     primary: Grid,
     alt: Grid,
     alt_active: bool,
+    modes: Modes,
 }
 
 impl Screen {
@@ -24,7 +56,18 @@ impl Screen {
             primary,
             alt,
             alt_active: false,
+            modes: Modes::default(),
         }
+    }
+
+    /// The current input modes — read by the event loop to decide whether a mouse
+    /// event or a paste goes to the program (encoded) or is handled locally.
+    pub fn modes(&self) -> Modes {
+        self.modes
+    }
+    /// Mutable access for the parser to flip modes on `?...h/l`.
+    pub fn modes_mut(&mut self) -> &mut Modes {
+        &mut self.modes
     }
 
     /// The buffer currently shown / written to.

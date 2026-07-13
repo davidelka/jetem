@@ -104,6 +104,33 @@ sweet spot: we implement every escape we care about, but don't re-debug the toke
 4. **M4** keyboard → PTY — interactive; this is a real terminal.
 5. **M5+** colors, cursor, scrollback, resize, config, copy/paste, then GPU/perf.
 
+## 8. Mouse reporting & bracketed paste (input-side DEC modes) — M14
+
+Two things a program can turn on so it receives richer input. Both are DEC private
+modes (`ESC[?<n>h` to enable, `l` to disable). The twist vs. earlier modes: the
+*parser* sets them but the *input path* (the event loop) reads them — so in jetem
+they live on `Screen.modes` (shared behind the same lock), not in the parser.
+
+**Mouse reporting.** By default we consume the mouse ourselves (select text, scroll
+our scrollback). When a program asks for the mouse, we stop, and instead *encode*
+each event and write it to the PTY like keystrokes:
+- **Tracking level** — what to report: `?1000` press+release, `?1002` adds drag
+  (motion while a button is held), `?1003` adds free motion. A program picks one.
+- **Encoding** — how to write coordinates: legacy X10 packs button/col/row into
+  three bytes each offset by 32 (so col 224+ overflowed — the historical 223 limit);
+  **SGR `?1006`** writes them as decimal text (`ESC[<Cb;Cx;Cy` + `M` press / `m`
+  release), removing the limit. Every modern app uses `?1000-3` + `?1006`.
+- `Cb` = button (0/1/2) OR modifier bits (shift 4, alt 8, ctrl 16), +32 for motion;
+  the wheel is 64/65. Convention: **Shift bypasses reporting** so you can still
+  select text inside tmux/vim.
+
+**Bracketed paste `?2004`.** Without it, a pasted block is indistinguishable from
+typing, so a shell runs each embedded newline immediately (dangerous) and vim
+re-indents every line. With it on, we wrap the paste in `ESC[200~ … ESC[201~`; the
+program treats the middle as one inert literal. Security note: strip any `ESC[201~`
+already in the clipboard, or a crafted paste could close the bracket early and inject
+a command that *does* run.
+
 ## References to read
 - VT100 / xterm "ctlseqs" control-sequence reference.
 - `st` (suckless terminal, ~2k lines of C) — whole pipeline at a glance.
