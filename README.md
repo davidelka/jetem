@@ -138,6 +138,7 @@ the selected command (doesn't run it) · `Ctrl-Shift-C` copy its output · `Esc`
 | `docs/roadmap.md` | vision, architecture, and milestones |
 | `docs/notes.md` | terminal-internals study notes |
 | `examples/plugins/` | the bundled plugins |
+| `examples/demo.sh` | escape-sequence tour (run inside jetem: `sh examples/demo.sh`) |
 | `sdk/jetem_plugin.py` | the Python plugin SDK |
 
 ## Roadmap (next)
