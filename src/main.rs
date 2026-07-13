@@ -36,6 +36,13 @@ use window::{App, UserEvent};
 const ROWS: u16 = 24;
 const COLS: u16 = 80;
 const FONT_PATH: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";
+/// Fallback fonts for glyphs the primary lacks (e.g. Hebrew). Tried in order;
+/// any that aren't installed are silently skipped. FreeMono is monospace and
+/// covers Hebrew + much of Latin-plus; Noto Sans Hebrew is a broad backstop.
+const FALLBACK_FONTS: &[&str] = &[
+    "/usr/share/fonts/truetype/freefont/FreeMono.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
+];
 const FONT_PX: f32 = 16.0;
 
 fn main() -> anyhow::Result<()> {
@@ -54,7 +61,7 @@ fn main() -> anyhow::Result<()> {
     }));
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    let font = font::Font::load(FONT_PATH, FONT_PX)?;
+    let font = font::Font::load(FONT_PATH, FALLBACK_FONTS, FONT_PX)?;
 
     // The event loop carries our custom `UserEvent` so pane reader threads can
     // wake it to repaint.

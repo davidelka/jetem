@@ -89,7 +89,7 @@ at **M8** (first time there's >1 region) — not earlier, to avoid a one-impleme
 | `cell.rs` | `Cell { ch, fg, bg, attrs }`, `Color` (Default/Indexed/Rgb), `attr` bit flags. |
 | `grid.rs` | The screen model: cursor, deferred-wrap, erase, scroll, **scrollback + view offset**, cursor visibility. |
 | `parser.rs` | `vte::Perform` impl: escape codes → grid ops (cursor moves, SGR colors, erase, `?25` cursor show/hide). |
-| `font.rs` | fontdue load, cell metrics (`cell_w/cell_h/baseline`), cached glyph rasterization. |
+| `font.rs` | fontdue load (primary + **fallback fonts** for glyphs the primary lacks, e.g. Hebrew), cell metrics (`cell_w/cell_h/baseline`), cached glyph rasterization. |
 | `render.rs` | Software painter: 256/truecolor resolve (palette from the `Theme`), alpha `blend`, glyph drawing, `draw_text`/`fill`/`draw_border` UI primitives. |
 | `theme.rs` | `Theme` — all paint colors (terminal/ui/panel/recall) in one place; built-in default = the original look, overridable via `~/.config/jetem/theme.toml` (hex strings, partial). |
 | `screen.rs` | `Screen{primary, alt}` — the two buffers; alt-screen switching. |
@@ -105,7 +105,7 @@ at **M8** (first time there's >1 region) — not earlier, to avoid a one-impleme
 | `window.rs` | winit `App`: compositor over panes, input/keys, prefix dispatch, host actions, toast, redraw. |
 
 Crates: `portable-pty`, `vte`, `winit` 0.30, `softbuffer` 0.4, `fontdue`, `serde`/`serde_json`, `toml`, `arboard`, `anyhow`.
-Initial **80×24** (resizable); font path hardcoded to DejaVu Sans Mono; display target **X11** (Wayland via arboard feature).
+Initial **80×24** (resizable); primary font hardcoded to DejaVu Sans Mono with a fallback chain (FreeMono/Noto Hebrew) for missing glyphs; display target **X11** (Wayland via arboard feature).
 
 **Multiplexing is a plugin** (`examples/plugins/mux.py`) — core no longer hardcodes the split/focus/close keys. Plugins are opt-in via `plugins.toml`; the zsh integration auto-injects (no manual source).
 
@@ -133,7 +133,7 @@ Done: **M1–M10** — engine, resize, alt-screen, multiplexing, command blocks 
 **M18 (done): scrollback text search.** `Ctrl-A /` opens an incremental `less`/`vim`-style search over scrollback + live screen (core, like recall — reads in-process grid state). Matches tint in place, current one brighter; the view auto-scrolls to the nearest; ↑/↓/Enter cycle, Esc closes. Pure `Search` (`src/search.rs`: query/matches/`step`/`hit`) driven by `Grid::all_lines_text`/`scroll_to_line`/`total_lines`; `render::paint` maps visible row → absolute line (`scrollback_len - view_offset + row`) to tint; themable via `theme.search` (match/current/prompt colors). Prompt bar drawn in `window::redraw`.
 Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugin tier (WASM/Rhai), preset-picker UI, font/glyph providers. See `docs/roadmap.md`.
 
-**Repo:** public on GitHub at https://github.com/davidelka/jetem (`main`, ssh remote `origin`). Renamed from "terminal" → "jetem". 89 unit tests passing.
+**Repo:** public on GitHub at https://github.com/davidelka/jetem (`main`, ssh remote `origin`). Renamed from "terminal" → "jetem". 90 unit tests passing.
 
 ## Working conventions
 
@@ -147,7 +147,7 @@ Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugi
   versions; grep `~/.cargo/registry/src/...` rather than guessing).
 - **Milestone-based commits**, only when asked. End commit messages with the
   `Co-Authored-By: Claude Opus 4.8 (1M context)` trailer. Currently committing to `main`.
-- Keep unit tests green (`cargo test`; 89 passing). Add tests for grid/parser/panel/theme/config logic.
+- Keep unit tests green (`cargo test`; 90 passing). Add tests for grid/parser/panel/theme/config logic.
 
 ## Build / test / run
 
