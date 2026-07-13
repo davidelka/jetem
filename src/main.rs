@@ -12,6 +12,7 @@ mod cell;
 mod config;
 mod font;
 mod grid;
+mod keys;
 mod layout;
 mod pane;
 mod panel;
@@ -83,7 +84,8 @@ fn main() -> anyhow::Result<()> {
 
     // Start with one full-window pane; Ctrl-A splits create more.
     let rect = Rect::new(0, 0, COLS as usize * font.cell_w, ROWS as usize * font.cell_h);
-    let mut app = App::new(font, proxy, shell, rect, plugins, theme)?;
+    let key_config = keys::KeyConfig::load();
+    let mut app = App::new(font, proxy, shell, rect, plugins, theme, key_config)?;
     event_loop.run_app(&mut app)?;
     Ok(())
 }

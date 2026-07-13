@@ -243,10 +243,17 @@ The terminal's prefix key is **`Ctrl-A`** (like tmux's `Ctrl-B`). A keybinding's
 The token after `prefix ` is the character winit produces for the key (already
 shift-resolved, so `|` not `\`), or `up`/`down`/`left`/`right` for the arrows.
 
-**Reserved chords** — the core keeps these, so don't bind them:
+**Reserved chords** — the core keeps these by default, so avoid binding them:
 
 - `prefix r` — the command-recall overlay.
+- `prefix /` — scrollback text search.
 - `prefix a` — sends a literal `Ctrl-A` to the shell.
+
+**User overrides win.** The prefix, the core actions above, and *your* declared
+chords can all be remapped by the user in `~/.config/jetem/keys.toml`. A
+`[commands]` entry keyed by your command id replaces the chord you asked for — so
+never assume your requested chord is the one that's live; the host owns the final
+binding table.
 
 Command ids are global; chords are global. If two plugins register the same chord,
 the last one to load wins, so namespace your ids and pick chords thoughtfully.

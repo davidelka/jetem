@@ -13,7 +13,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
-use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
+use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::ansi;
@@ -22,7 +22,8 @@ use crate::font::Font;
 use crate::layout::{Layout, PaneId, SplitDir};
 use crate::pane::{Rect, TerminalPane};
 use crate::panel::{TextPanel, TreeNode};
-use crate::plugin::{Plugin, PluginId, PluginInbound, Registry};
+use crate::keys::{self, CoreAction, KeyConfig};
+use crate::plugin::{Action, Plugin, PluginId, PluginInbound, Registry};
 use crate::recall::Recall;
 use crate::render;
 use crate::screen::MouseTracking;
@@ -106,6 +107,7 @@ impl App {
         initial: Rect,
         plugins: HashMap<PluginId, Plugin>,
         theme: Theme,
+        keys: KeyConfig,
     ) -> anyhow::Result<Self> {
         let id: PaneId = 0;
         let first =
@@ -124,7 +126,7 @@ impl App {
             proxy,
             shell,
             plugins,
-            registry: Registry::default(),
+            registry: Registry::new(&keys),
             font,
             theme,
             mods: ModifiersState::empty(),
@@ -238,41 +240,77 @@ impl App {
         }
     }
 
-    /// Handle the key pressed right after the Ctrl-A prefix.
-    ///
-    /// Multiplexing (split/focus/close) now lives in the `mux` plugin (the M10
-    /// dogfood): plugin keybindings are looked up in the registry. The core only
-    /// keeps `r` (recall, which needs in-process state) and `a` (literal Ctrl-A).
-    fn handle_prefix_command(&mut self, _event_loop: &ActiveEventLoop, event: &KeyEvent) {
-        // A plugin keybinding (e.g. "prefix |") — the multiplexer lives here.
-        if let Some(chord) = chord_string(event) {
-            if let Some((command, pid)) = self.registry.command_for_chord(&chord) {
-                if let Some(p) = self.plugins.get(&pid) {
+    /// Handle the key pressed right after the prefix. Both core actions (recall,
+    /// search, literal) and plugin commands (mux split/focus/close, etc.) resolve
+    /// through the one unified binding table — the user's `keys.toml` can rebind
+    /// either.
+    fn handle_prefix_command(&mut self, event_loop: &ActiveEventLoop, event: &KeyEvent) {
+        let Some(chord) = keys::event_prefixed_chord(event) else {
+            return;
+        };
+        self.dispatch_chord(&chord, event_loop);
+    }
+
+    /// Look a canonical chord up in the registry and run whatever it's bound to.
+    /// Returns whether the chord was bound (so global-key handling can fall through).
+    fn dispatch_chord(&mut self, chord: &str, event_loop: &ActiveEventLoop) -> bool {
+        match self.registry.action_for_chord(chord).cloned() {
+            Some(Action::Core(action)) => {
+                self.dispatch_core_action(action, event_loop);
+                true
+            }
+            Some(Action::Plugin { command, plugin }) => {
+                if let Some(p) = self.plugins.get(&plugin) {
                     p.invoke(&command);
                 }
-                return;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Run a built-in action. These stay in core because they touch in-process
+    /// state (grid, blocks, clipboard) a plugin can't reach.
+    fn dispatch_core_action(&mut self, action: CoreAction, _event_loop: &ActiveEventLoop) {
+        match action {
+            CoreAction::Recall => {
+                let mut session = Vec::new();
+                for p in self.panes.values() {
+                    session.extend(p.blocks().lock().unwrap().history().iter().cloned());
+                }
+                self.overlay = Some(Recall::open(session));
+            }
+            CoreAction::Search => self.search = Some(Search::new()),
+            CoreAction::LiteralPrefix => {
+                if let Some(p) = self.panes.get_mut(&self.focused) {
+                    p.write_input(&[ansi::CTRL_A]);
+                }
+            }
+            CoreAction::Copy => self.copy_contextual(),
+            CoreAction::Paste => self.paste(),
+            CoreAction::ScrollUp | CoreAction::ScrollDown => {
+                if let Some(p) = self.panes.get(&self.focused) {
+                    let mut s = p.screen().lock().unwrap();
+                    let page = s.rows() as isize - 1;
+                    let delta = if matches!(action, CoreAction::ScrollUp) { page } else { -page };
+                    s.active_mut().scroll_view(delta);
+                }
             }
         }
-        if let Key::Character(s) = &event.logical_key {
-            match s.as_str() {
-                "r" => {
-                    // Recall reads in-process block state, so it stays in core.
-                    let mut session = Vec::new();
-                    for p in self.panes.values() {
-                        session.extend(p.blocks().lock().unwrap().history().iter().cloned());
-                    }
-                    self.overlay = Some(Recall::open(session));
-                }
-                // Ctrl-A then / -> scrollback text search (reads the grid, so core).
-                "/" => self.search = Some(Search::new()),
-                // Ctrl-A then a -> send a literal Ctrl-A to the shell.
-                "a" => {
-                    if let Some(p) = self.panes.get_mut(&self.focused) {
-                        p.write_input(&[ansi::CTRL_A]);
-                    }
-                }
-                _ => {}
+    }
+
+    /// Copy from whatever's focused: an open panel's selection, then the recall
+    /// overlay's block output, else the mouse text selection.
+    fn copy_contextual(&mut self) {
+        if let Some(p) = &self.panel {
+            let text = p.copy_text();
+            self.set_clipboard(text);
+        } else if let Some(o) = &self.overlay {
+            if let Some(text) = o.selected_output() {
+                self.set_clipboard(text);
             }
+        } else {
+            self.copy_selection();
         }
     }
 
@@ -910,32 +948,19 @@ impl ApplicationHandler<UserEvent> for App {
                 if is_modifier_key(&event) {
                     return;
                 }
-                // Ctrl-Shift-C / Ctrl-Shift-V: clipboard, handled before the
-                // shell's Ctrl-C (SIGINT) and normal input. Match the physical
-                // key so it's reliable regardless of how modifiers affect the
-                // logical key.
-                if self.mods.control_key() && self.mods.shift_key() {
-                    match event.physical_key {
-                        PhysicalKey::Code(KeyCode::KeyC) => {
-                            // Copy from whatever's focused: panel selection, then
-                            // overlay block output, else the mouse selection.
-                            if let Some(p) = &self.panel {
-                                let text = p.copy_text();
-                                self.set_clipboard(text);
-                            } else if let Some(o) = &self.overlay {
-                                if let Some(text) = o.selected_output() {
-                                    self.set_clipboard(text);
-                                }
-                            } else {
-                                self.copy_selection();
-                            }
+                // The canonical global chord for this key (e.g. "ctrl+shift+c").
+                // Resolved once and reused for copy/paste, the prefix, and other
+                // global bindings below.
+                let gchord = keys::event_global_chord(&event, self.mods);
+                // Copy/Paste run before the modal captures so they work even while
+                // a panel or the recall overlay is open. Bound via the same table,
+                // so `keys.toml` can remap them.
+                if let Some(c) = &gchord {
+                    if let Some(Action::Core(a)) = self.registry.action_for_chord(c).cloned() {
+                        if matches!(a, CoreAction::Copy | CoreAction::Paste) {
+                            self.dispatch_core_action(a, event_loop);
                             return;
                         }
-                        PhysicalKey::Code(KeyCode::KeyV) => {
-                            self.paste();
-                            return;
-                        }
-                        _ => {}
                     }
                 }
                 // A modal panel captures all input while it's open.
@@ -1025,21 +1050,14 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                     return;
                 }
-                if is_prefix(&event, self.mods) {
+                if gchord.as_deref() == Some(self.registry.prefix.as_str()) {
                     self.pending_prefix = true;
                     return; // swallow the prefix itself
                 }
-                // Shift+PageUp/Down scroll the focused pane's viewport locally.
-                if self.mods.shift_key() {
-                    if let Key::Named(key @ (NamedKey::PageUp | NamedKey::PageDown)) =
-                        event.logical_key
-                    {
-                        if let Some(p) = self.panes.get(&self.focused) {
-                            let mut s = p.screen().lock().unwrap();
-                            let page = s.rows() as isize - 1;
-                            s.active_mut()
-                                .scroll_view(if key == NamedKey::PageUp { page } else { -page });
-                        }
+                // Any other configured global chord (scrollback scroll, or a
+                // plugin's global binding) fires here in normal mode.
+                if let Some(c) = gchord {
+                    if self.dispatch_chord(&c, event_loop) {
                         if let Some(w) = &self.window {
                             w.request_redraw();
                         }
@@ -1174,18 +1192,6 @@ fn wrap_paste(text: &str, bracketed: bool) -> Vec<u8> {
     out
 }
 
-/// The chord string a plugin keybinding matches, e.g. "prefix |" / "prefix up".
-fn chord_string(event: &KeyEvent) -> Option<String> {
-    match &event.logical_key {
-        Key::Character(s) => Some(format!("prefix {s}")),
-        Key::Named(NamedKey::ArrowUp) => Some("prefix up".into()),
-        Key::Named(NamedKey::ArrowDown) => Some("prefix down".into()),
-        Key::Named(NamedKey::ArrowLeft) => Some("prefix left".into()),
-        Key::Named(NamedKey::ArrowRight) => Some("prefix right".into()),
-        _ => None,
-    }
-}
-
 /// Flatten a nested `{label, children:[...]}` JSON tree (or a top-level array of
 /// such nodes) into a pre-order `Vec<TreeNode>` with depths.
 fn json_flatten_node(node: &Value, depth: usize, out: &mut Vec<TreeNode>) {
@@ -1225,12 +1231,6 @@ fn json_str_row(v: Option<&Value>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// Ctrl-A is the multiplexer prefix (like tmux's Ctrl-B).
-fn is_prefix(event: &KeyEvent, mods: ModifiersState) -> bool {
-    mods.control_key()
-        && matches!(&event.logical_key, Key::Character(s) if s.eq_ignore_ascii_case("a"))
 }
 
 /// A bare modifier keypress (Shift/Ctrl/Alt/…), which must not consume a pending

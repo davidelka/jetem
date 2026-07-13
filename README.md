@@ -92,9 +92,10 @@ protocol — host actions, events, the manifest, the chord grammar — is docume
 
 ## Keybindings
 
-The prefix is **`Ctrl-A`** (like tmux's `Ctrl-B`), then a command key. Core keeps only
-`r` and `a`; the rest are registered by whichever plugins you've enabled in
-`~/.config/jetem/plugins.toml`.
+The prefix is **`Ctrl-A`** (like tmux's `Ctrl-B`) by default, then a command key. Core
+keeps only `r`/`/`/`a`; the rest are registered by whichever plugins you've enabled in
+`~/.config/jetem/plugins.toml`. **All of it is remappable** — the prefix, the built-in
+actions, and any plugin command — via `~/.config/jetem/keys.toml` (sample: `examples/keys.toml`).
 
 **Prefix chords** (`Ctrl-A` then…):
 

@@ -95,6 +95,11 @@ The event-bus + registries layer is runtime-independent; that's the real design 
   (`Ctrl-A y` cycle, `Ctrl-A p` bg-flip). Custom symbols/glyphs still need the in-process tier.
 
 ### Cross-cutting / later
+- [x] **M19 Config-driven keybindings** — a unified binding table (`plugin::Registry`:
+  canonical chord → `Core(action)` | `Plugin{command}`) so `~/.config/jetem/keys.toml`
+  remaps the prefix, the core actions, and plugin commands (by id). Precedence:
+  core defaults → plugin manifest → user overrides. `keys.rs` owns parsing/`KeyConfig`.
+  Also: **font fallback** (`font.rs`) so glyphs the primary lacks (e.g. Hebrew) render.
 - [x] **M18 Scrollback text search** (`Ctrl-A /`) — incremental `less`/`vim`-style
   search over scrollback + live screen. Matches tint in place (current one brighter),
   the view auto-scrolls to the nearest, ↑/↓/Enter cycle, Esc closes. Pure `Search`

@@ -88,36 +88,86 @@ pub fn parse_line(line: &str) -> Option<PluginInbound> {
     Some(PluginInbound::Manifest(manifest))
 }
 
-// --- registry (commands / keybindings / event subscriptions) ----------------
+// --- registry (unified binding table / commands / event subscriptions) -------
 
-#[derive(Default)]
+use crate::keys::{canonical, CoreAction, KeyConfig};
+
+/// What a chord triggers: a built-in action handled by the window, or a plugin
+/// command (by id + owning plugin).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Action {
+    Core(CoreAction),
+    Plugin { command: String, plugin: PluginId },
+}
+
+/// The single source of truth for "which chord does what". Core actions and
+/// plugin commands share **one** `keymap`, so `keys.toml` can rebind either.
+/// Precedence (later wins on a chord collision): core defaults → plugin manifest
+/// chords → user `keys.toml` overrides.
 pub struct Registry {
     /// command id -> owning plugin.
     pub commands: HashMap<String, PluginId>,
-    /// keybinding chord -> command id.
-    pub keymap: HashMap<String, String>,
+    /// canonical chord -> action.
+    pub keymap: HashMap<String, Action>,
     /// event name -> subscribed plugins.
     pub events: HashMap<String, Vec<PluginId>>,
+    /// The canonical chord that opens a prefix sequence (default `ctrl+a`).
+    pub prefix: String,
+    /// User overrides: command id -> canonical chord (replace the plugin's own).
+    command_overrides: HashMap<String, String>,
 }
 
 impl Registry {
+    /// Seed the table from the key config: the prefix, every core action's chord,
+    /// and the stored per-command overrides (applied as plugins register).
+    pub fn new(cfg: &KeyConfig) -> Self {
+        let mut keymap = HashMap::new();
+        for (action, chord) in &cfg.core {
+            keymap.insert(chord.clone(), Action::Core(*action));
+        }
+        Self {
+            commands: HashMap::new(),
+            keymap,
+            events: HashMap::new(),
+            prefix: cfg.prefix.clone(),
+            command_overrides: cfg.commands.clone(),
+        }
+    }
+
     pub fn apply_manifest(&mut self, plugin: PluginId, m: &Manifest) {
         for c in &m.commands {
             self.commands.insert(c.id.clone(), plugin);
         }
         for k in &m.keybindings {
-            self.keymap.insert(k.keys.clone(), k.command.clone());
+            // A user override for this command wins over the plugin's declared
+            // chord; otherwise use what the plugin asked for (canonicalized).
+            let chord = self
+                .command_overrides
+                .get(&k.command)
+                .cloned()
+                .or_else(|| canonical(&k.keys));
+            let Some(chord) = chord else { continue };
+            let action = Action::Plugin { command: k.command.clone(), plugin };
+            if let Some(prev) = self.keymap.insert(chord.clone(), action) {
+                if !matches!(&prev, Action::Plugin { command, .. } if *command == k.command) {
+                    eprintln!("[keys] chord {chord:?} rebound to {} (was {prev:?})", k.command);
+                }
+            }
         }
         for e in &m.events {
             self.events.entry(e.clone()).or_default().push(plugin);
         }
     }
 
-    /// Resolve a key chord to (command id, owning plugin).
-    pub fn command_for_chord(&self, chord: &str) -> Option<(String, PluginId)> {
-        let cmd = self.keymap.get(chord)?;
-        let pid = self.commands.get(cmd)?;
-        Some((cmd.clone(), *pid))
+    /// Resolve a canonical chord to its action, if any.
+    pub fn action_for_chord(&self, chord: &str) -> Option<&Action> {
+        self.keymap.get(chord)
+    }
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        Registry::new(&KeyConfig::default())
     }
 }
 
@@ -274,7 +324,31 @@ mod tests {
         };
         let mut reg = Registry::default();
         reg.apply_manifest(3, &m);
-        assert_eq!(reg.command_for_chord("prefix |"), Some(("split".to_string(), 3)));
-        assert_eq!(reg.command_for_chord("prefix x"), None);
+        assert_eq!(
+            reg.action_for_chord("prefix |"),
+            Some(&Action::Plugin { command: "split".into(), plugin: 3 })
+        );
+        assert_eq!(reg.action_for_chord("prefix x"), None);
+        // A core default still resolves in the same table.
+        assert!(matches!(reg.action_for_chord("prefix r"), Some(Action::Core(_))));
+    }
+
+    #[test]
+    fn user_override_beats_plugin_chord() {
+        use crate::keys::KeyConfig;
+        let mut cfg = KeyConfig::default();
+        cfg.commands.insert("split".into(), "prefix v".into());
+        let mut reg = Registry::new(&cfg);
+        let m = Manifest {
+            name: "mux".into(),
+            commands: vec![CommandDef { id: "split".into(), title: String::new() }],
+            keybindings: vec![KeyBinding { keys: "prefix |".into(), command: "split".into() }],
+            events: vec![],
+            protocol_version: None,
+        };
+        reg.apply_manifest(1, &m);
+        // The override chord wins; the plugin's declared chord is not bound.
+        assert!(matches!(reg.action_for_chord("prefix v"), Some(Action::Plugin { .. })));
+        assert_eq!(reg.action_for_chord("prefix |"), None);
     }
 }

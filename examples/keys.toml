@@ -1,0 +1,29 @@
+# Sample keybindings. Copy to ~/.config/jetem/keys.toml and edit.
+# Everything is optional — omitted keys keep their built-in defaults.
+#
+# Chord grammar:
+#   global:   modifiers + a key, e.g. "ctrl+shift+c", "shift+pageup"
+#             modifiers: ctrl · alt · shift · super (aliases: control, cmd, meta, opt)
+#   prefixed: "prefix <key>" — a key pressed after the prefix key, e.g. "prefix r"
+#   keys:     a single char ("r", "/", "|") or a named key
+#             (pageup, pagedown, enter, space, tab, esc, backspace, up/down/left/right, home, end)
+
+# The prefix key (default "ctrl+a"). Try tmux-style:
+# prefix = "ctrl+b"
+
+# Built-in core actions. Defaults shown; uncomment to remap.
+[core]
+# recall     = "prefix r"          # command-block recall overlay
+# search     = "prefix /"          # scrollback text search
+# literal    = "prefix a"          # send a literal prefix byte to the shell
+# copy       = "ctrl+shift+c"
+# paste      = "ctrl+shift+v"
+# scroll_up  = "shift+pageup"
+# scroll_down = "shift+pagedown"
+
+# Override a plugin's declared chord, keyed by its command id. These win over
+# whatever the plugin's manifest asked for.
+[commands]
+# "mux.split-lr" = "prefix v"
+# "mux.split-tb" = "prefix s"
+# "ai.explain"   = "prefix e"

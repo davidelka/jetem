@@ -102,6 +102,7 @@ at **M8** (first time there's >1 region) — not earlier, to avoid a one-impleme
 | `selection.rs` | Mouse text selection + extraction. |
 | `plugin.rs` | **Plugin host**: JSON-RPC transport, `Registry` (chord→command→plugin), `Plugin` process. |
 | `config.rs` | Plugin sources: `~/.config/jetem/plugins.toml` (explicit commands) **+** drop-in dir `~/.config/jetem/plugins/` (executable→shebang, else `.py`/`.js`/`.sh`→interpreter). |
+| `keys.rs` | **Configurable keybindings**: `Chord` canonicalization, `CoreAction` enum + defaults, `KeyConfig` loaded from `~/.config/jetem/keys.toml`. Feeds the unified binding table in `plugin::Registry`. |
 | `window.rs` | winit `App`: compositor over panes, input/keys, prefix dispatch, host actions, toast, redraw. |
 
 Crates: `portable-pty`, `vte`, `winit` 0.30, `softbuffer` 0.4, `fontdue`, `serde`/`serde_json`, `toml`, `arboard`, `anyhow`.
@@ -131,9 +132,10 @@ Done: **M1–M10** — engine, resize, alt-screen, multiplexing, command blocks 
 **M16 (done): scroll regions.** `DECSTBM` (`CSI top;bottom r`) sets top/bottom margins on `Grid` (`scroll_top`/`scroll_bottom`); line feeds at the bottom margin scroll only the band, `RI` (`ESC M`) scrolls it up at the top margin. `SU`/`SD` (`S`/`T`), `IL`/`DL` (`L`/`M`). New `Grid` methods: `set_scroll_region`, `scroll_region_up/down` (private), `scroll_up_n`/`scroll_down_n`, `reverse_index`, `insert_lines`/`delete_lines`. Full-screen upward scroll still archives to scrollback; a **partial** region discards scrolled-out lines (branch on `full_screen_region()`). `resize` resets the region to full screen.
 **M17 (done): `host/getTheme`.** A plugin can now *read* the live theme — the first request/reply host action (others are fire-and-forget). Core replies with the theme JSON via `Plugin::reply_value` (special-cased in the `HostAction` arm). The Python SDK gained `plug.get_theme()` (sends the request, pumps stdin until the matching reply — safe inside a command handler; run loop refactored into `_read_msg`/`_dispatch`). `theme.py`'s `Ctrl-A p` flip now reads the real bg and flips to the exact opposite luminance instead of guessing from the preset name.
 **M18 (done): scrollback text search.** `Ctrl-A /` opens an incremental `less`/`vim`-style search over scrollback + live screen (core, like recall — reads in-process grid state). Matches tint in place, current one brighter; the view auto-scrolls to the nearest; ↑/↓/Enter cycle, Esc closes. Pure `Search` (`src/search.rs`: query/matches/`step`/`hit`) driven by `Grid::all_lines_text`/`scroll_to_line`/`total_lines`; `render::paint` maps visible row → absolute line (`scrollback_len - view_offset + row`) to tint; themable via `theme.search` (match/current/prompt colors). Prompt bar drawn in `window::redraw`.
-Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugin tier (WASM/Rhai), preset-picker UI, font/glyph providers. See `docs/roadmap.md`.
+**M19 (done): config-driven keybindings (unified table).** `~/.config/jetem/keys.toml` can remap the prefix, the built-in **core actions** (`recall`/`search`/`literal`/`copy`/`paste`/`scroll_up`/`scroll_down`), **and** plugin commands (by id via `[commands]`). One binding table in `plugin::Registry` maps a canonical chord → `Action` (`Core(CoreAction)` | `Plugin{command,pid}`); precedence is core defaults → plugin manifest chords → user overrides (collisions logged). `keys.rs` owns chord parsing/canonicalization (`ctrl+shift+c`, `prefix r`) and the `KeyConfig` loader; `window.rs` resolves every key (prefix, prefixed, global) through the table via `dispatch_chord`/`dispatch_core_action` (the old hardcoded `is_prefix`/`match s.as_str()`/copy-paste/scroll blocks are gone). **Font fallback (fix):** `font.rs` now falls back through a chain (FreeMono/Noto Hebrew) for glyphs the primary lacks, so Hebrew etc. render (logical/LTR order; full bidi deferred).
+Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugin tier (WASM/Rhai), preset-picker UI, RTL/bidi text, font/glyph providers. See `docs/roadmap.md`.
 
-**Repo:** public on GitHub at https://github.com/davidelka/jetem (`main`, ssh remote `origin`). Renamed from "terminal" → "jetem". 90 unit tests passing.
+**Repo:** public on GitHub at https://github.com/davidelka/jetem (`main`, ssh remote `origin`). Renamed from "terminal" → "jetem". 94 unit tests passing.
 
 ## Working conventions
 
@@ -147,7 +149,7 @@ Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugi
   versions; grep `~/.cargo/registry/src/...` rather than guessing).
 - **Milestone-based commits**, only when asked. End commit messages with the
   `Co-Authored-By: Claude Opus 4.8 (1M context)` trailer. Currently committing to `main`.
-- Keep unit tests green (`cargo test`; 90 passing). Add tests for grid/parser/panel/theme/config logic.
+- Keep unit tests green (`cargo test`; 94 passing). Add tests for grid/parser/panel/theme/config logic.
 
 ## Build / test / run
 
