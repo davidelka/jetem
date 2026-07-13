@@ -198,9 +198,15 @@ impl Plugin {
         self.send(json!({"jsonrpc":"2.0","method":"command/invoke","params":{"command":command}}));
     }
 
-    /// Reply to a `host/*` action request.
+    /// Reply to a `host/*` action request with `{ok: bool}`.
     pub fn reply(&self, id: Value, ok: bool) {
-        self.send(json!({"jsonrpc":"2.0","id":id,"result":{"ok":ok}}));
+        self.reply_value(id, json!({ "ok": ok }));
+    }
+
+    /// Reply to a `host/*` request with an arbitrary result payload (e.g. the
+    /// theme for `host/getTheme`).
+    pub fn reply_value(&self, id: Value, result: Value) {
+        self.send(json!({"jsonrpc":"2.0","id":id,"result":result}));
     }
 
     /// Send an event notification (used from M10b).

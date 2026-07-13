@@ -34,6 +34,7 @@ class Plugin:
         self._keybindings = []  # [{"keys", "command"}]
         self._events = {}       # name -> callable(params)
         self._lock = threading.Lock()
+        self._req_id = 0        # monotonic request id, so replies can be matched
 
     # --- registration -----------------------------------------------------
 
@@ -59,10 +60,15 @@ class Plugin:
     # --- host actions -----------------------------------------------------
 
     def _send(self, method, params):
-        msg = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+        """Send a request to the host; returns the id used, so a reply can be
+        matched (only `get_theme` currently waits for one)."""
         with self._lock:
+            self._req_id += 1
+            rid = self._req_id
+            msg = {"jsonrpc": "2.0", "id": rid, "method": method, "params": params}
             sys.stdout.write(json.dumps(msg) + "\n")
             sys.stdout.flush()
+        return rid
 
     def notify(self, text):
         self._send("host/notify", {"text": text})
@@ -127,29 +133,56 @@ class Plugin:
             sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result}) + "\n")
             sys.stdout.flush()
 
-    def run(self):
-        """Block on stdin, dispatching host messages until the host closes it.
-
-        Lines that are pure responses (the host's `{"ok":...}` replies to our
-        actions) carry no `method` and are simply ignored.
-        """
-        for line in sys.stdin:
+    def _read_msg(self):
+        """Read and parse one line from stdin. Returns the dict, or None at EOF.
+        Blank/garbage lines are skipped (returns the next real message)."""
+        while True:
+            line = sys.stdin.readline()
+            if not line:
+                return None  # EOF: the host closed the pipe
             line = line.strip()
             if not line:
                 continue
             try:
-                msg = json.loads(line)
+                return json.loads(line)
             except json.JSONDecodeError:
                 continue
-            method = msg.get("method")
-            if method == "initialize":
-                self.host_protocol_version = msg.get("params", {}).get("protocolVersion")
-                self._reply(msg.get("id"), self._manifest())
-            elif method == "command/invoke":
-                fn = self._commands.get(msg.get("params", {}).get("command"))
-                if fn:
-                    fn()
-            elif method and method.startswith("event/"):
-                fn = self._events.get(method[len("event/"):])
-                if fn:
-                    fn(msg.get("params", {}))
+
+    def _dispatch(self, msg):
+        """Handle one host->plugin message (initialize / command / event). Pure
+        responses (replies to our requests) carry no `method` and are ignored
+        here — `get_theme` picks up the one it's waiting for itself."""
+        method = msg.get("method")
+        if method == "initialize":
+            self.host_protocol_version = msg.get("params", {}).get("protocolVersion")
+            self._reply(msg.get("id"), self._manifest())
+        elif method == "command/invoke":
+            fn = self._commands.get(msg.get("params", {}).get("command"))
+            if fn:
+                fn()
+        elif method and method.startswith("event/"):
+            fn = self._events.get(method[len("event/"):])
+            if fn:
+                fn(msg.get("params", {}))
+
+    def get_theme(self):
+        """Ask the host for the current theme and wait for the reply, returning
+        it as a dict (the same shape as theme.toml). Safe to call from inside a
+        command handler: it pumps stdin, dispatching any messages that arrive
+        before the reply so nothing is lost. Returns {} if the host closes first."""
+        rid = self._send("host/getTheme", {})
+        while True:
+            msg = self._read_msg()
+            if msg is None:
+                return {}
+            if msg.get("id") == rid and "result" in msg:
+                return msg["result"].get("theme", {})
+            self._dispatch(msg)
+
+    def run(self):
+        """Block on stdin, dispatching host messages until the host closes it."""
+        while True:
+            msg = self._read_msg()
+            if msg is None:
+                break
+            self._dispatch(msg)

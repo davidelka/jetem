@@ -100,7 +100,10 @@ The event-bus + registries layer is runtime-independent; that's the real design 
   `E/F` (CNL/CPL), `@/P/X` (ICH/DCH/ECH), and save/restore cursor (`ESC 7/8`, `CSI s/u`).
   Plus the rest of the SGR attribute set (2 dim, 5 blink, 8 conceal, 9 strike-through +
   resets) — dim/conceal/underline/strike-through now render; blink is parsed only.
-  Deferred: scroll regions (DECSTBM/SU/SD/IL/DL/RI) — need region-aware `Grid` scrolling.
+- [x] **M16 Scroll regions** — `DECSTBM` margins + region-aware scrolling: `SU`/`SD`
+  (`S`/`T`), `IL`/`DL` (`L`/`M`), `RI` (`ESC M`), and margin-respecting line feeds.
+  A full-screen scroll still archives to scrollback; a partial region discards its
+  scrolled-out lines. Completes the parser-correctness arc.
 - [x] **M14 Mouse reporting + bracketed paste** — core input-side DEC modes. Mouse
   tracking `?1000/1002/1003` with SGR `?1006` (legacy X10 too) so vim/tmux/htop/less
   get clicks, drags, and wheel; **Shift** bypasses to keep local text selection.
@@ -110,7 +113,7 @@ The event-bus + registries layer is runtime-independent; that's the real design 
   built-in default = the original look, overridable via `~/.config/jetem/theme.toml`
   (hex strings, partial override). Threaded through `render::paint`, the text panel,
   and the recall overlay. Plugin-driven theming (`host/setTheme`, named presets) landed
-  in **M13**; next here: `host/getTheme` (needs a plugin-reply path), a preset-picker UI,
-  and font/glyph providers (the in-process tier).
+  in **M13**; `host/getTheme` (read the live theme — the first request/reply host action)
+  in **M17**. Next here: a preset-picker UI and font/glyph providers (the in-process tier).
 - Config file (TOML), copy/paste
 - Performance: GPU rendering (wgpu), glyph atlas, damage tracking

@@ -440,6 +440,16 @@ impl App {
                 method,
                 params,
             } => {
+                // `host/getTheme` is a *query*: reply with the current theme as
+                // JSON (rather than the usual {ok} acknowledgement) so a plugin can
+                // read live colors — e.g. to compute the true opposite background.
+                if method == "host/getTheme" {
+                    let theme = serde_json::to_value(&self.theme).unwrap_or(Value::Null);
+                    if let Some(p) = self.plugins.get(&id) {
+                        p.reply_value(req_id, json!({ "theme": theme }));
+                    }
+                    return;
+                }
                 let ok = self.apply_host_action(event_loop, id, &method, &params);
                 if let Some(p) = self.plugins.get(&id) {
                     p.reply(req_id, ok);
