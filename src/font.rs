@@ -6,6 +6,51 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use fontdue::{Font as FdFont, FontSettings, Metrics};
+use serde::Deserialize;
+
+/// The built-in font defaults (reproduced when there's no `font.toml`).
+const DEFAULT_PATH: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";
+const DEFAULT_FALLBACKS: &[&str] = &[
+    "/usr/share/fonts/truetype/freefont/FreeMono.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
+];
+const DEFAULT_PX: f32 = 16.0;
+
+/// User font configuration from `~/.config/jetem/font.toml` — the primary font
+/// path, pixel size, and fallback chain. Every field is optional; omitted ones
+/// take the built-in default, so a `font.toml` can set just the size.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct FontConfig {
+    pub path: String,
+    pub size: f32,
+    pub fallbacks: Vec<String>,
+}
+
+impl Default for FontConfig {
+    fn default() -> Self {
+        Self {
+            path: DEFAULT_PATH.to_string(),
+            size: DEFAULT_PX,
+            fallbacks: DEFAULT_FALLBACKS.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+
+impl FontConfig {
+    /// Load `~/.config/jetem/font.toml`, falling back to defaults for the whole
+    /// file (missing/malformed) or any individual omitted field.
+    pub fn load() -> Self {
+        match font_config_path().and_then(|p| std::fs::read_to_string(p).ok()) {
+            Some(text) => toml::from_str(&text).unwrap_or_default(),
+            None => Self::default(),
+        }
+    }
+}
+
+fn font_config_path() -> Option<std::path::PathBuf> {
+    crate::config::config_dir().map(|d| d.join("font.toml"))
+}
 
 /// A rasterized glyph: per-pixel coverage (0 = bg, 255 = full fg) plus the
 /// metrics needed to position the bitmap within a cell.
@@ -68,6 +113,20 @@ impl Font {
         })
     }
 
+    /// Load from a [`FontConfig`]. If the configured primary font can't be
+    /// loaded (e.g. a bad path in `font.toml`), fall back to the built-in default
+    /// font rather than refusing to launch — the fallbacks and size are kept.
+    pub fn from_config(cfg: &FontConfig) -> anyhow::Result<Self> {
+        let fallbacks: Vec<&str> = cfg.fallbacks.iter().map(String::as_str).collect();
+        match Self::load(&cfg.path, &fallbacks, cfg.size) {
+            Ok(font) => Ok(font),
+            Err(e) => {
+                eprintln!("[font] can't load {:?} ({e}); using the default font", cfg.path);
+                Self::load(DEFAULT_PATH, &fallbacks, cfg.size)
+            }
+        }
+    }
+
     /// The font that actually has a glyph for `ch`: the primary if it covers it,
     /// else the first fallback that does, else the primary (which rasterizes to a
     /// blank/`.notdef` — same as before fallbacks existed).
@@ -99,6 +158,19 @@ mod tests {
 
     const PRIMARY: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";
     const HE_FALLBACK: &str = "/usr/share/fonts/truetype/freefont/FreeMono.ttf";
+
+    #[test]
+    fn font_config_partial_override_keeps_defaults() {
+        // Only `size` is set; path + fallbacks must stay at the built-in defaults.
+        let c: FontConfig = toml::from_str("size = 20.0").unwrap();
+        assert_eq!(c.size, 20.0);
+        assert_eq!(c.path, DEFAULT_PATH);
+        assert_eq!(c.fallbacks.len(), DEFAULT_FALLBACKS.len());
+        // A fully-default config reproduces today's hardcoded values.
+        let d = FontConfig::default();
+        assert_eq!(d.size, 16.0);
+        assert_eq!(d.path, DEFAULT_PATH);
+    }
 
     #[test]
     fn fallback_renders_a_glyph_the_primary_lacks() {

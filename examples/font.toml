@@ -1,0 +1,16 @@
+# Sample font config. Copy to ~/.config/jetem/font.toml and edit.
+# Every field is optional — omitted ones keep the built-in defaults
+# (DejaVu Sans Mono, size 16, with FreeMono + Noto Sans Hebrew fallbacks).
+
+# Primary monospace font. A bad path falls back to the default (won't crash).
+# path = "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf"
+
+# Pixel size (cell geometry derives from the primary at this size).
+# size = 15.0
+
+# Fallback fonts, tried in order for any glyph the primary lacks (e.g. Hebrew,
+# CJK). Missing files are skipped silently.
+# fallbacks = [
+#   "/usr/share/fonts/truetype/freefont/FreeMono.ttf",
+#   "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
+# ]

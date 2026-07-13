@@ -89,7 +89,7 @@ at **M8** (first time there's >1 region) — not earlier, to avoid a one-impleme
 | `cell.rs` | `Cell { ch, fg, bg, attrs }`, `Color` (Default/Indexed/Rgb), `attr` bit flags. |
 | `grid.rs` | The screen model: cursor, deferred-wrap, erase, scroll, **scrollback + view offset**, cursor visibility. |
 | `parser.rs` | `vte::Perform` impl: escape codes → grid ops (cursor moves, SGR colors, erase, `?25` cursor show/hide). |
-| `font.rs` | fontdue load (primary + **fallback fonts** for glyphs the primary lacks, e.g. Hebrew), cell metrics (`cell_w/cell_h/baseline`), cached glyph rasterization. |
+| `font.rs` | fontdue load (primary + **fallback fonts** for glyphs the primary lacks, e.g. Hebrew), cell metrics (`cell_w/cell_h/baseline`), cached glyph rasterization. **`FontConfig`** = `~/.config/jetem/font.toml` (path/size/fallbacks; bad primary → default). |
 | `render.rs` | Software painter: 256/truecolor resolve (palette from the `Theme`), alpha `blend`, glyph drawing, `draw_text`/`fill`/`draw_border` UI primitives. |
 | `theme.rs` | `Theme` — all paint colors (terminal/ui/panel/recall) in one place; built-in default = the original look, overridable via `~/.config/jetem/theme.toml` (hex strings, partial). |
 | `screen.rs` | `Screen{primary, alt}` — the two buffers; alt-screen switching. |
@@ -106,7 +106,7 @@ at **M8** (first time there's >1 region) — not earlier, to avoid a one-impleme
 | `window.rs` | winit `App`: compositor over panes, input/keys, prefix dispatch, host actions, toast, redraw. |
 
 Crates: `portable-pty`, `vte`, `winit` 0.30, `softbuffer` 0.4, `fontdue`, `serde`/`serde_json`, `toml`, `arboard`, `anyhow`.
-Initial **80×24** (resizable); primary font hardcoded to DejaVu Sans Mono with a fallback chain (FreeMono/Noto Hebrew) for missing glyphs; display target **X11** (Wayland via arboard feature).
+Initial **80×24** (resizable); default primary font DejaVu Sans Mono + fallback chain (FreeMono/Noto Hebrew), all overridable via `~/.config/jetem/font.toml`; display target **X11** (Wayland via arboard feature).
 
 **Multiplexing is a plugin** (`examples/plugins/mux.py`) — core no longer hardcodes the split/focus/close keys. Plugins are opt-in via `plugins.toml`; the zsh integration auto-injects (no manual source).
 
@@ -135,7 +135,7 @@ Done: **M1–M10** — engine, resize, alt-screen, multiplexing, command blocks 
 **M19 (done): config-driven keybindings (unified table).** `~/.config/jetem/keys.toml` can remap the prefix, the built-in **core actions** (`recall`/`search`/`literal`/`copy`/`paste`/`scroll_up`/`scroll_down`), **and** plugin commands (by id via `[commands]`). One binding table in `plugin::Registry` maps a canonical chord → `Action` (`Core(CoreAction)` | `Plugin{command,pid}`); precedence is core defaults → plugin manifest chords → user overrides (collisions logged). `keys.rs` owns chord parsing/canonicalization (`ctrl+shift+c`, `prefix r`) and the `KeyConfig` loader; `window.rs` resolves every key (prefix, prefixed, global) through the table via `dispatch_chord`/`dispatch_core_action` (the old hardcoded `is_prefix`/`match s.as_str()`/copy-paste/scroll blocks are gone). **Font fallback (fix):** `font.rs` now falls back through a chain (FreeMono/Noto Hebrew) for glyphs the primary lacks, so Hebrew etc. render (logical/LTR order; full bidi deferred).
 Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugin tier (WASM/Rhai), preset-picker UI, RTL/bidi text, font/glyph providers. See `docs/roadmap.md`.
 
-**Repo:** public on GitHub at https://github.com/davidelka/jetem (`main`, ssh remote `origin`). Renamed from "terminal" → "jetem". 94 unit tests passing.
+**Repo:** public on GitHub at https://github.com/davidelka/jetem (`main`, ssh remote `origin`). Renamed from "terminal" → "jetem". 95 unit tests passing.
 
 ## Working conventions
 
@@ -149,7 +149,7 @@ Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugi
   versions; grep `~/.cargo/registry/src/...` rather than guessing).
 - **Milestone-based commits**, only when asked. End commit messages with the
   `Co-Authored-By: Claude Opus 4.8 (1M context)` trailer. Currently committing to `main`.
-- Keep unit tests green (`cargo test`; 94 passing). Add tests for grid/parser/panel/theme/config logic.
+- Keep unit tests green (`cargo test`; 95 passing). Add tests for grid/parser/panel/theme/config logic.
 
 ## Build / test / run
 
