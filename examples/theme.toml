@@ -38,3 +38,8 @@ text = "#cdcdd7"
 dim = "#787887"           # the "(no matches)" hint
 sel_bg = "#5a9ce6"        # selected row background
 sel_fg = "#101218"        # selected row text
+
+[search]
+match_bg = "#5a4a14"      # scrollback-search match highlight
+current_bg = "#c8a028"    # the current (focused) match, brighter
+prompt = "#ebc878"        # the /query (n/total) prompt bar

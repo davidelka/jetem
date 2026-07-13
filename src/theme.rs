@@ -99,6 +99,17 @@ pub struct Recall {
     pub sel_fg: Col,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Search {
+    /// Background tint of every scrollback-search match.
+    pub match_bg: Col,
+    /// Background tint of the *current* (focused) match — brighter.
+    pub current_bg: Col,
+    /// Foreground of the `/query (n/total)` prompt bar.
+    pub prompt: Col,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Theme {
@@ -106,6 +117,7 @@ pub struct Theme {
     pub ui: Ui,
     pub panel: Panel,
     pub recall: Recall,
+    pub search: Search,
 }
 
 impl Theme {
@@ -243,6 +255,16 @@ impl Default for Recall {
     }
 }
 
+impl Default for Search {
+    fn default() -> Self {
+        Self {
+            match_bg: Col(90, 74, 20),    // dim amber
+            current_bg: Col(200, 160, 40), // bright amber
+            prompt: Col(235, 200, 120),
+        }
+    }
+}
+
 // --- built-in named presets (beyond the default) ----------------------------
 
 impl Theme {
@@ -296,6 +318,7 @@ impl Theme {
                 sel_bg: Col(0x1a, 0x5f, 0xb4),
                 sel_fg: Col(0xf7, 0xf7, 0xf2),
             },
+            search: Search::default(),
         }
     }
 
@@ -349,6 +372,7 @@ impl Theme {
                 sel_bg: blue,
                 sel_fg: base03,
             },
+            search: Search::default(),
         }
     }
 }

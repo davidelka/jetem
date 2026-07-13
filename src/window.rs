@@ -26,6 +26,7 @@ use crate::plugin::{Plugin, PluginId, PluginInbound, Registry};
 use crate::recall::Recall;
 use crate::render;
 use crate::screen::MouseTracking;
+use crate::search::Search;
 use crate::selection::Selection;
 use crate::theme::Theme;
 
@@ -71,6 +72,9 @@ pub struct App {
     pending_prefix: bool,
     /// The command-recall overlay, when open (captures input + drawn on top).
     overlay: Option<Recall>,
+    /// Scrollback text search (`Ctrl-A /`), when active: captures input, tints
+    /// matches in the focused pane, and shows a prompt bar. Searches `focused`.
+    search: Option<Search>,
     /// A modal text panel (e.g. an AI answer), when open.
     panel: Option<TextPanel>,
     /// A transient toast message from `host/notify` and when it was shown.
@@ -126,6 +130,7 @@ impl App {
             mods: ModifiersState::empty(),
             pending_prefix: false,
             overlay: None,
+            search: None,
             panel: None,
             toast: None,
             selection: None,
@@ -258,6 +263,8 @@ impl App {
                     }
                     self.overlay = Some(Recall::open(session));
                 }
+                // Ctrl-A then / -> scrollback text search (reads the grid, so core).
+                "/" => self.search = Some(Search::new()),
                 // Ctrl-A then a -> send a literal Ctrl-A to the shell.
                 "a" => {
                     if let Some(p) = self.panes.get_mut(&self.focused) {
@@ -299,6 +306,47 @@ impl App {
         }
         if close {
             self.overlay = None;
+        }
+    }
+
+    /// Route a key to the active scrollback search. Typing refilters and jumps to
+    /// the nearest match; Enter/↓ and ↑ cycle matches; Esc closes (leaving the
+    /// view where the last match is, `less`-style).
+    fn handle_search_key(&mut self, event: &KeyEvent) {
+        // The line list comes from the focused pane's grid; hold it briefly.
+        let lines: Vec<String> = match self.panes.get(&self.focused) {
+            Some(p) => p.screen().lock().unwrap().active().all_lines_text(),
+            None => return,
+        };
+        let mut jump = None; // absolute line to scroll into view
+        let mut close = false;
+        if let Some(s) = &mut self.search {
+            match &event.logical_key {
+                Key::Named(NamedKey::Escape) => close = true,
+                Key::Named(NamedKey::Enter) | Key::Named(NamedKey::ArrowDown) => {
+                    jump = s.step(1).map(|m| m.line);
+                }
+                Key::Named(NamedKey::ArrowUp) => jump = s.step(-1).map(|m| m.line),
+                Key::Named(NamedKey::Backspace) => {
+                    s.on_backspace(&lines);
+                    jump = s.current_match().map(|m| m.line);
+                }
+                Key::Character(ch) => {
+                    for c in ch.chars() {
+                        s.on_char(c, &lines);
+                    }
+                    jump = s.current_match().map(|m| m.line);
+                }
+                _ => {}
+            }
+        }
+        if let Some(abs) = jump {
+            if let Some(p) = self.panes.get(&self.focused) {
+                p.screen().lock().unwrap().active_mut().scroll_to_line(abs);
+            }
+        }
+        if close {
+            self.search = None;
         }
     }
 
@@ -619,6 +667,8 @@ impl App {
             let rect = pane.rect();
             let focused = *id == self.focused;
             let sel = self.selection.as_ref().filter(|s| s.pane == *id);
+            // Search highlights only apply to the focused pane it's searching.
+            let search = if focused { self.search.as_ref() } else { None };
             let screen = pane.screen().lock().unwrap();
             render::paint(
                 &mut buffer,
@@ -629,6 +679,7 @@ impl App {
                 &mut self.font,
                 focused,
                 sel,
+                search,
                 &self.theme,
             );
         }
@@ -645,6 +696,17 @@ impl App {
         // A modal text panel (e.g. an AI answer) draws above the overlay.
         if let Some(panel) = &self.panel {
             panel.draw(&mut buffer, w as usize, h as usize, &mut self.font, &self.theme);
+        }
+        // Scrollback-search prompt bar along the bottom: `/query   (2/7)`.
+        if let Some(search) = &self.search {
+            let (cw, ch) = (self.font.cell_w, self.font.cell_h.max(1));
+            let y = (h as usize).saturating_sub(ch);
+            let bar = Rect::new(0, y, w as usize, ch);
+            render::fill(&mut buffer, w as usize, h as usize, bar, self.theme.panel.bg.rgb());
+            let (cur, total) = search.counts();
+            let count = if total == 0 { "(no matches)".to_string() } else { format!("({cur}/{total})") };
+            let text = format!("/{}   {}", search.query(), count);
+            render::draw_text(&mut buffer, w as usize, h as usize, &mut self.font, cw, y, &text, self.theme.search.prompt.rgb(), None);
         }
         // A transient toast (from host/notify) along the bottom for a few
         // seconds. Multi-line answers (e.g. from the AI plugin) render as a
@@ -936,6 +998,14 @@ impl ApplicationHandler<UserEvent> for App {
                 // The recall overlay captures all input while it's open.
                 if self.overlay.is_some() {
                     self.handle_overlay_key(&event);
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                    return;
+                }
+                // Scrollback search captures input while active.
+                if self.search.is_some() {
+                    self.handle_search_key(&event);
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }

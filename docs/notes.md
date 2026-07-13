@@ -161,6 +161,25 @@ and dim). A CPU framebuffer can't animate, so **blink is parsed but not shown**;
 the glyph color toward its background, conceal skips the glyph, and underline/strike-through
 draw a 1px rule — which also gave us real underline rendering for the first time.
 
+## 10. Scrollback text search — M18
+
+A `less`/`vim`-style `/` search over the terminal's own history. Unlike the recall
+overlay (which searches *command blocks* from OSC 133), this searches the raw
+**text**: every scrollback line plus the live screen. Because scrollback lives in
+`Grid` and isn't exposed to plugins, search is **core** — same reasoning as recall.
+
+Two coordinate systems have to line up:
+- **Absolute line index** (`0..total_lines()`, oldest first) — how `Search` records
+  matches, over `Grid::all_lines_text()`.
+- **Visible row** — what `render::paint` draws. The bridge is one formula:
+  screen row `r` shows absolute line `scrollback_len - view_offset + r`. Paint uses it
+  to decide which cells to tint; `scroll_to_line(abs)` inverts it to bring a match
+  into view (centered) by setting `view_offset`.
+
+The search state (`Search`) is pure and testable — query, match list, current index,
+`step()`/`hit()`. The window feeds it the line list and routes keys (type = refilter +
+jump, ↑/↓/Enter = cycle, Esc = close); the theme owns the two highlight colors.
+
 ## References to read
 - VT100 / xterm "ctlseqs" control-sequence reference.
 - `st` (suckless terminal, ~2k lines of C) — whole pipeline at a glance.

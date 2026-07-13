@@ -21,6 +21,7 @@ mod pty;
 mod recall;
 mod render;
 mod screen;
+mod search;
 mod selection;
 mod theme;
 mod window;

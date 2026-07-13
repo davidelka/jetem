@@ -36,6 +36,13 @@ pub struct Grid {
     view_offset: usize,
 }
 
+/// Collect a row's chars into a string with trailing blanks trimmed (a terminal
+/// row is padded with spaces to full width; searching wants the logical text).
+fn row_text(chars: impl Iterator<Item = char>) -> String {
+    let s: String = chars.collect();
+    s.trim_end().to_string()
+}
+
 impl Grid {
     pub fn new(rows: usize, cols: usize) -> Self {
         Grid {
@@ -436,6 +443,36 @@ impl Grid {
         self.view_offset = 0;
     }
 
+    // --- scrollback search support ---------------------------------------
+
+    /// Total number of addressable lines: scrollback history plus the live rows.
+    /// "Absolute line" indices used by search run `0..total_lines()`, oldest first.
+    pub fn total_lines(&self) -> usize {
+        self.scrollback.len() + self.rows
+    }
+
+    /// Every line (scrollback then live rows) as trimmed text, in absolute order.
+    /// Used by the scrollback-search overlay to find matches.
+    pub fn all_lines_text(&self) -> Vec<String> {
+        let mut out = Vec::with_capacity(self.total_lines());
+        for line in &self.scrollback {
+            out.push(row_text(line.iter().map(|c| c.ch)));
+        }
+        for r in 0..self.rows {
+            out.push(row_text((0..self.cols).map(|c| self.cells[r * self.cols + c].ch)));
+        }
+        out
+    }
+
+    /// Move the viewport so absolute line `abs` sits roughly centered on screen.
+    pub fn scroll_to_line(&mut self, abs: usize) {
+        let sb = self.scrollback.len();
+        let center = self.rows / 2;
+        // Screen row r shows absolute line (sb - view_offset + r); solve for the
+        // offset that puts `abs` at `center`, then clamp to the scrollable range.
+        self.view_offset = (sb + center).saturating_sub(abs).min(sb);
+    }
+
     /// The cell shown at screen position (row, col), accounting for how far the
     /// viewport is scrolled into scrollback. Returned by value (Cell is Copy) so
     /// out-of-range columns in mixed-width scrollback yield a blank safely.
@@ -676,6 +713,26 @@ mod tests {
         let mut g = lettered(3, 2);
         g.scroll_down_n(1); // __ aa bb
         assert_eq!(rows_as_strings(&g), ["  ", "aa", "bb"]);
+    }
+
+    #[test]
+    fn all_lines_text_and_scroll_to_line() {
+        let mut g = Grid::new(2, 3);
+        for s in ["aaa", "bbb", "ccc"] {
+            for ch in s.chars() {
+                g.print(ch);
+            }
+            g.carriage_return();
+            g.line_feed();
+        }
+        // "aaa","bbb" archived to scrollback; live shows "ccc" then a blank row.
+        let lines = g.all_lines_text();
+        assert_eq!(lines, ["aaa", "bbb", "ccc", ""]);
+        assert_eq!(g.total_lines(), g.scrollback_len() + g.rows);
+        // Jump to the oldest line: the viewport scrolls up so it's visible.
+        g.scroll_to_line(0);
+        assert!(g.view_offset() > 0);
+        assert_eq!(g.visible_cell(0, 0).ch, 'a');
     }
 
     #[test]

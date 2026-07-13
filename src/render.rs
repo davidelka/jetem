@@ -64,6 +64,7 @@ pub fn paint(
     font: &mut Font,
     focused: bool,
     sel: Option<&Selection>,
+    search: Option<&crate::search::Search>,
     theme: &Theme,
 ) {
     let (cw, ch_, base) = (font.cell_w, font.cell_h, font.baseline);
@@ -103,6 +104,19 @@ pub fn paint(
             // Selection tint overrides the background.
             if sel.is_some_and(|s| s.contains(row, col)) {
                 bg = theme.terminal.selection.rgb();
+            }
+
+            // Scrollback-search highlight (focused pane only). Map this visible
+            // row back to its absolute line: row r shows line (sb - view + r).
+            if let Some(search) = search {
+                let abs = grid.scrollback_len() - grid.view_offset() + row;
+                if let Some(is_current) = search.hit(abs, col) {
+                    bg = if is_current {
+                        theme.search.current_bg.rgb()
+                    } else {
+                        theme.search.match_bg.rgb()
+                    };
+                }
             }
 
             // Faint (SGR 2): pull the glyph color toward its background.

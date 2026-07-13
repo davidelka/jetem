@@ -97,6 +97,7 @@ at **M8** (first time there's >1 region) — not earlier, to avoid a one-impleme
 | `layout.rs` | Binary split tree (`Layout`/`SplitDir`): `compute_rects`/`split`/`remove`. |
 | `block.rs` | OSC 133 command blocks + JSONL history (`BlockTracker`); base64 command decode. |
 | `recall.rs` | `Ctrl-A r` recall overlay (searchable history). |
+| `search.rs` | `Ctrl-A /` scrollback text search: pure `Search` (query/matches/step/hit); highlights painted by `render`, driven by `Grid::all_lines_text`/`scroll_to_line`. |
 | `panel.rs` | `TextPanel` — modal scrollable panel: wrapped text (`host/showPanel`), an aligned zebra-striped table (`host/showTable`), **or** a foldable tree (`host/showTree`); mark/copy, TSV copy for tables, arrow-key fold nav for trees. |
 | `selection.rs` | Mouse text selection + extraction. |
 | `plugin.rs` | **Plugin host**: JSON-RPC transport, `Registry` (chord→command→plugin), `Plugin` process. |
@@ -129,9 +130,10 @@ Done: **M1–M10** — engine, resize, alt-screen, multiplexing, command blocks 
 **M15 (done): parser correctness — cursor/edit CSIs + text attributes.** Added the sequences shell line editors and colored prompts rely on: `G`/`` ` ``/`d` (CHA/HPA/VPA absolute column/row), `E`/`F` (CNL/CPL), `@`/`P`/`X` (ICH/DCH/ECH in-line insert/delete/erase), and save/restore cursor (`ESC 7`/`8` DECSC/DECRC + `CSI s`/`u`) via a new `esc_dispatch`. New `Grid` methods (`move_to_col/row`, `cursor_next/prev_line`, `insert/delete/erase_chars`, `save/restore_cursor`). Plus the rest of the SGR attributes (2 dim, 5 blink, 8 conceal, 9 strike-through + 22/25/28/29 resets; `attr::DIM/BLINK/HIDDEN/STRIKETHROUGH` in `cell.rs`) — render.rs now draws dim/conceal/underline/strike-through (blink parsed only). **Deferred:** scroll regions (DECSTBM/SU/SD/IL/DL/RI — need region-aware Grid scrolling).
 **M16 (done): scroll regions.** `DECSTBM` (`CSI top;bottom r`) sets top/bottom margins on `Grid` (`scroll_top`/`scroll_bottom`); line feeds at the bottom margin scroll only the band, `RI` (`ESC M`) scrolls it up at the top margin. `SU`/`SD` (`S`/`T`), `IL`/`DL` (`L`/`M`). New `Grid` methods: `set_scroll_region`, `scroll_region_up/down` (private), `scroll_up_n`/`scroll_down_n`, `reverse_index`, `insert_lines`/`delete_lines`. Full-screen upward scroll still archives to scrollback; a **partial** region discards scrolled-out lines (branch on `full_screen_region()`). `resize` resets the region to full screen.
 **M17 (done): `host/getTheme`.** A plugin can now *read* the live theme — the first request/reply host action (others are fire-and-forget). Core replies with the theme JSON via `Plugin::reply_value` (special-cased in the `HostAction` arm). The Python SDK gained `plug.get_theme()` (sends the request, pumps stdin until the matching reply — safe inside a command handler; run loop refactored into `_read_msg`/`_dispatch`). `theme.py`'s `Ctrl-A p` flip now reads the real bg and flips to the exact opposite luminance instead of guessing from the preset name.
-Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugin tier (WASM/Rhai), preset-picker UI, font/glyph providers, scrollback text search. See `docs/roadmap.md`.
+**M18 (done): scrollback text search.** `Ctrl-A /` opens an incremental `less`/`vim`-style search over scrollback + live screen (core, like recall — reads in-process grid state). Matches tint in place, current one brighter; the view auto-scrolls to the nearest; ↑/↓/Enter cycle, Esc closes. Pure `Search` (`src/search.rs`: query/matches/`step`/`hit`) driven by `Grid::all_lines_text`/`scroll_to_line`/`total_lines`; `render::paint` maps visible row → absolute line (`scrollback_len - view_offset + row`) to tint; themable via `theme.search` (match/current/prompt colors). Prompt bar drawn in `window::redraw`.
+Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugin tier (WASM/Rhai), preset-picker UI, font/glyph providers. See `docs/roadmap.md`.
 
-**Repo:** public on GitHub at https://github.com/davidelka/jetem (`main`, ssh remote `origin`). Renamed from "terminal" → "jetem". 83 unit tests passing.
+**Repo:** public on GitHub at https://github.com/davidelka/jetem (`main`, ssh remote `origin`). Renamed from "terminal" → "jetem". 89 unit tests passing.
 
 ## Working conventions
 
@@ -145,7 +147,7 @@ Deferred: images (sixel/kitty), inline-in-scrollback rendering, in-process plugi
   versions; grep `~/.cargo/registry/src/...` rather than guessing).
 - **Milestone-based commits**, only when asked. End commit messages with the
   `Co-Authored-By: Claude Opus 4.8 (1M context)` trailer. Currently committing to `main`.
-- Keep unit tests green (`cargo test`; 83 passing). Add tests for grid/parser/panel/theme/config logic.
+- Keep unit tests green (`cargo test`; 89 passing). Add tests for grid/parser/panel/theme/config logic.
 
 ## Build / test / run
 

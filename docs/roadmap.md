@@ -95,6 +95,11 @@ The event-bus + registries layer is runtime-independent; that's the real design 
   (`Ctrl-A y` cycle, `Ctrl-A p` bg-flip). Custom symbols/glyphs still need the in-process tier.
 
 ### Cross-cutting / later
+- [x] **M18 Scrollback text search** (`Ctrl-A /`) — incremental `less`/`vim`-style
+  search over scrollback + live screen. Matches tint in place (current one brighter),
+  the view auto-scrolls to the nearest, ↑/↓/Enter cycle, Esc closes. Pure `Search`
+  (`src/search.rs`) + `Grid::all_lines_text`/`scroll_to_line`; highlight in `render::paint`;
+  themable colors (`theme.search`). Core, like recall (reads in-process grid state).
 - [x] **M15 Parser correctness — cursor/edit CSIs + text attributes.** Added the
   sequences shell line editors and colored prompts rely on: `G/`` ` ``/d` (CHA/HPA/VPA),
   `E/F` (CNL/CPL), `@/P/X` (ICH/DCH/ECH), and save/restore cursor (`ESC 7/8`, `CSI s/u`).

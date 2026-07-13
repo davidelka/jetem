@@ -101,6 +101,7 @@ The prefix is **`Ctrl-A`** (like tmux's `Ctrl-B`), then a command key. Core keep
 | Chord | Action | From |
 |---|---|---|
 | `Ctrl-A r` | searchable command-block recall | core |
+| `Ctrl-A /` | search scrollback text (type · `↑`/`↓`/`Enter` cycle · `Esc` close) | core |
 | `Ctrl-A a` | send a literal `Ctrl-A` to the shell | core |
 | `Ctrl-A \|` / `v`, `-` / `s` | split pane (left-right / top-bottom) | `mux.py` |
 | `Ctrl-A h` `j` `k` `l` / arrows | move focus between panes | `mux.py` |
