@@ -6,6 +6,7 @@
 //! (fontdue). Keyboard input in the window is encoded to bytes and written back
 //! to the PTY, so it's a real, usable terminal (fixed 80×24 until M6).
 
+mod ansi;
 mod block;
 mod cell;
 mod config;

@@ -16,6 +16,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+use crate::ansi;
 use crate::block::Block;
 use crate::font::Font;
 use crate::layout::{Layout, PaneId, SplitDir};
@@ -260,7 +261,7 @@ impl App {
                 // Ctrl-A then a -> send a literal Ctrl-A to the shell.
                 "a" => {
                     if let Some(p) = self.panes.get_mut(&self.focused) {
-                        p.write_input(&[0x01]);
+                        p.write_input(&[ansi::CTRL_A]);
                     }
                 }
                 _ => {}
@@ -999,17 +1000,17 @@ fn encode_key(event: &KeyEvent, mods: ModifiersState) -> Option<Vec<u8>> {
 
     match &event.logical_key {
         Key::Named(named) => match named {
-            NamedKey::Enter => Some(vec![b'\r']), // terminals send CR, not LF
-            NamedKey::Backspace => Some(vec![0x7f]), // DEL, what readline expects
-            NamedKey::Tab => Some(vec![b'\t']),
-            NamedKey::Escape => Some(vec![0x1b]),
-            NamedKey::Space => Some(vec![b' ']),
-            NamedKey::ArrowUp => Some(b"\x1b[A".to_vec()),
-            NamedKey::ArrowDown => Some(b"\x1b[B".to_vec()),
-            NamedKey::ArrowRight => Some(b"\x1b[C".to_vec()),
-            NamedKey::ArrowLeft => Some(b"\x1b[D".to_vec()),
-            NamedKey::Home => Some(b"\x1b[H".to_vec()),
-            NamedKey::End => Some(b"\x1b[F".to_vec()),
+            NamedKey::Enter => Some(vec![ansi::CR]),
+            NamedKey::Backspace => Some(vec![ansi::BACKSPACE]),
+            NamedKey::Tab => Some(vec![ansi::TAB]),
+            NamedKey::Escape => Some(vec![ansi::ESC]),
+            NamedKey::Space => Some(vec![ansi::SPACE]),
+            NamedKey::ArrowUp => Some(ansi::CURSOR_UP.as_bytes().to_vec()),
+            NamedKey::ArrowDown => Some(ansi::CURSOR_DOWN.as_bytes().to_vec()),
+            NamedKey::ArrowRight => Some(ansi::CURSOR_RIGHT.as_bytes().to_vec()),
+            NamedKey::ArrowLeft => Some(ansi::CURSOR_LEFT.as_bytes().to_vec()),
+            NamedKey::Home => Some(ansi::HOME.as_bytes().to_vec()),
+            NamedKey::End => Some(ansi::END.as_bytes().to_vec()),
             _ => None,
         },
         // Printable text (already layout/shift-resolved by winit).
@@ -1065,12 +1066,16 @@ fn encode_mouse(
 
     if sgr {
         let final_ch = if matches!(kind, MouseKind::Release) { 'm' } else { 'M' };
-        format!("\x1b[<{cb};{x};{y}{final_ch}").into_bytes()
+        let mut v = ansi::MOUSE_SGR.as_bytes().to_vec();
+        v.extend_from_slice(format!("{cb};{x};{y}{final_ch}").as_bytes());
+        v
     } else {
         // Legacy can't say *which* button was released, so release is always 3.
         let cb = if matches!(kind, MouseKind::Release) { 3 | mod_bits } else { cb };
         let enc = |n: u32| (n + 32).min(255) as u8;
-        vec![0x1b, b'[', b'M', enc(cb), enc(x), enc(y)]
+        let mut v = ansi::MOUSE_X10.as_bytes().to_vec();
+        v.extend_from_slice(&[enc(cb), enc(x), enc(y)]);
+        v
     }
 }
 
@@ -1081,11 +1086,11 @@ fn wrap_paste(text: &str, bracketed: bool) -> Vec<u8> {
     if !bracketed {
         return text.as_bytes().to_vec();
     }
-    let cleaned = text.replace("\x1b[201~", "");
+    let cleaned = text.replace(ansi::PASTE_END, "");
     let mut out = Vec::with_capacity(cleaned.len() + 12);
-    out.extend_from_slice(b"\x1b[200~");
+    out.extend_from_slice(ansi::PASTE_START.as_bytes());
     out.extend_from_slice(cleaned.as_bytes());
-    out.extend_from_slice(b"\x1b[201~");
+    out.extend_from_slice(ansi::PASTE_END.as_bytes());
     out
 }
 
